@@ -12,7 +12,7 @@ class Config:
             "api_key": "YOUR_AI_API_KEY",
             "base_url": "https://openai.com",
             "model": "gpt-4o-mini",
-            "current_faction": "Законодательство РФ",  // Название фракции по умолчанию
+            "current_faction": "Законодательство РФ",  # Название фракции по умолчанию
             "character": {
                 "name": "Иван Иванов",
                 "rank": "Рядовой",
@@ -20,7 +20,7 @@ class Config:
                 "personality": "Вежливый, строго следует уставу, говорит уверенно"
             },
             "hotkeys": {
-                "toggle_overlay": "shift+\\",  // Дефолтный настраиваемый хоткей
+                "toggle_overlay": "shift+\\",  # Дефолтный настраиваемый хоткей
                 "submit_request": "enter"
             }
         }

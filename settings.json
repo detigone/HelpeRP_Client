@@ -1,0 +1,16 @@
+{
+    "api_key": "YOUR_AI_API_KEY",
+    "base_url": "https://openai.com",
+    "model": "gpt-4o-mini",
+    "current_faction": "МЧС",
+    "character": {
+        "name": "Иван Иванов",
+        "rank": "Рядовой",
+        "badge": "№0000",
+        "personality": "Вежливый, строго следует уставу, говорит уверенно"
+    },
+    "hotkeys": {
+        "toggle_overlay": "shift+\\",
+        "submit_request": "enter"
+    }
+}

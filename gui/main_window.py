@@ -2,139 +2,259 @@
 import customtkinter as ctk
 import json
 import os
+import threading
 from core.config import app_config
-from core.ai_client import rp_ai
-from core.hotkeys import send_rp_sequence
 
 class HelpeRPMainWindow:
     def __init__(self):
-        # Настраиваем глубокую темную тему
         ctk.set_appearance_mode("dark")
-        
         self.root = ctk.CTk()
-        self.root.title("HelpeRP Overlay")
-        
-        # Полный оверлей: убираем рамки Windows, окно всегда на переднем плане
+        self.root.title("HelpeRP — База Знаний")
         self.root.attributes("-topmost", True)
-        self.root.overrideredirect(True)
         
-        # Чуть увеличим размеры для красивых отступов
-        self.width = 580
-        self.height = 190
-        
-        # Идеальное центрирование на экране (чуть выше центра)
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        x = (screen_width // 2) - (self.width // 2)
-        y = (screen_height // 4)
+        self.width = 950
+        self.height = 620
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = (sw // 2) - (self.width // 2)
+        y = (sh // 2) - (self.height // 2)
         self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
-        
-        # Делаем окно стильно-полупрозрачным
-        self.root.attributes("-alpha", 0.96)
-
-        # Цветовая палитра софта
-        self.color_idle = "#00f0ff"       # Неоновый голубой (ожидание)
-        self.color_processing = "#ff9900" # Оранжевый (ИИ думает)
-        self.color_success = "#2ecc71"    # Зеленый (успех)
-        self.bg_dark = "#111214"          # Ультра-темный фон
 
         self.is_visible = True
+        self.all_laws = []
+        self.load_laws_database()
         self.create_ui()
 
-    def create_ui(self):
-        """Создание премиального киберспортивного интерфейса"""
-        # Главный фрейм приложения со светящейся неоновой рамкой
-        self.main_frame = ctk.CTkFrame(
-            self.root, 
-            corner_radius=16, 
-            border_width=2, 
-            border_color=self.color_idle,
-            fg_color=self.bg_dark
-        )
-        self.main_frame.pack(fill="both", expand=True, padx=3, pady=3)
-
-        # 1. ШАПКА ИНТЕРФЕЙСА
-        self.top_bar = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-        self.top_bar.pack(fill="x", padx=20, pady=(15, 5))
-
-        # Текст логотипа с красивым шрифтом
-        self.logo_label = ctk.CTkLabel(
-            self.top_bar, 
-            text="🤖 Helpe", 
-            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
-            text_color="#ffffff"
-        )
-        self.logo_label.pack(side="left")
+    def load_laws_database(self):
+        """Загрузка выбранной базы данных фракции"""
+        fac = app_config.get("current_faction", "Законодательство РФ")
         
-        # Выделяем буквы RP неоновым цветом
-        self.logo_rp = ctk.CTkLabel(
-            self.top_bar, 
-            text="RP", 
-            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
-            text_color=self.color_idle
-        )
-        self.logo_rp.pack(side="left")
+        if fac == "Законодательство РФ":
+            path = "data/legislation_rf.json"
+        elif fac == "МЧС":
+            path = "data/mchs.json"
+        else:
+            path = "data/smp.json"
 
-        # Текст текущего статуса
-        self.title_label = ctk.CTkLabel(
-            self.top_bar, 
-            text="  |  Система готова", 
-            font=ctk.CTkFont(family="Segoe UI", size=12),
-            text_color="#a0a0a0"
-        )
-        self.title_label.pack(side="left")
+        if not os.path.exists(path):
+            self.load_fallback_data()
+            return
 
-        # Дизайнерский выпадающий список выбора фракций
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            if isinstance(data, dict) and "codes" in data:
+                flat = []
+                for c_name, arts in data["codes"].items():
+                    for a in arts:
+                        a["title"] = f"[{c_name[:5]}] {a['title']}"
+                        flat.append(a)
+                self.all_laws = flat
+            elif isinstance(data, dict) and "emergency_protocols" in data:
+                self.all_laws = data["emergency_protocols"]
+            elif isinstance(data, dict) and "medical_protocols" in data:
+                self.all_laws = data["medical_protocols"]
+            else:
+                self.all_laws = data if isinstance(data, list) else []
+        except Exception as e:
+            print(f"[Ошибка JSON]: {e}")
+            self.load_fallback_data()
+
+    def load_fallback_data(self):
+        """Резервные данные если файлов нет на диске"""
+        self.all_laws = [
+            {"article": "105", "title": "Статья 105 УК РФ", 
+             "description": "Убийство.", "is_frequent": True},
+            {"article": "228", "title": "Статья 228 УК РФ", 
+             "description": "Наркотики.", "is_frequent": True}
+        ]
+    def create_ui(self):
+        """Создание сетки и элементов управления"""
+        self.root.grid_columnconfigure(0, weight=0, minsize=340)
+        self.root.grid_columnconfigure(1, weight=1)
+        self.root.grid_rowconfigure(0, weight=1)
+
+        # Левая колонка
+        self.left_frame = ctk.CTkFrame(
+            self.root, fg_color="#1e1f22", corner_radius=0
+        )
+        self.left_frame.grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
+        
         self.faction_selector = ctk.CTkComboBox(
-            self.top_bar,
+            self.left_frame,
             values=["Законодательство РФ", "МЧС", "СМП"],
-            width=190,
-            height=28,
-            corner_radius=8,
-            fg_color="#1e1f22",
-            border_color="#2b2d31",
-            button_color="#2b2d31",
-            button_hover_color=self.color_idle,
-            dropdown_fg_color="#1e1f22",
-            dropdown_hover_color="#2b2d31",
-            font=ctk.CTkFont(family="Segoe UI", size=12),
-            command=self.change_faction
+            height=32, command=self.change_faction
         )
-        self.faction_selector.pack(side="right")
-        current_fac = app_config.get("current_faction", "Законодательство РФ")
-        self.faction_selector.set(current_fac)
-
-        # 2. ЗОНА ВВОДА С КОНТРАСТНЫМ ФОНОМ
-        self.input_container = ctk.CTkFrame(self.main_frame, fg_color="#1e1f22", corner_radius=10)
-        self.input_container.pack(fill="x", padx=20, pady=10)
-
-        self.input_entry = ctk.CTkEntry(
-            self.input_container, 
-            placeholder_text=" Наговорите или введите ситуацию (например: ножевое ранение в живот)...",
-            width=520,
-            height=42,
-            corner_radius=8,
-            fg_color="transparent",
-            border_width=0, # Убираем стандартную рамку ввода для бесшовного стиля
-            text_color="#ffffff",
-            placeholder_text_color="#606060",
-            font=ctk.CTkFont(family="Segoe UI", size=13)
+        self.faction_selector.pack(fill="x", padx=15, pady=(15, 5))
+        self.faction_selector.set(
+            app_config.get("current_faction", "Законодательство РФ")
         )
-        self.input_entry.pack(fill="x", padx=5, pady=2)
-        self.input_entry.bind("<Return>", self.handle_submit)
-
-        # 3. ПОДВАЛ (ХОТКЕИ)
-        self.footer_label = ctk.CTkLabel(
-            self.main_frame, 
-            text="⚡ [Alt + Space] — Скрыть оверлей    •    [Enter] — Запустить ИИ-суфлер", 
-            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-            text_color="#505050"
+        
+        self.search_entry = ctk.CTkEntry(
+            self.left_frame, placeholder_text="🔍 Поиск...", height=35
         )
-        self.footer_label.pack(pady=(0, 10))
+        self.search_entry.pack(fill="x", padx=15, pady=10)
+        self.search_entry.bind("<KeyRelease>", self.filter_laws)
+
+        self.scroll_list = ctk.CTkScrollableFrame(
+            self.left_frame, fg_color="transparent"
+        )
+        self.scroll_list.pack(fill="both", expand=True, padx=5, pady=(0, 10))
+
+        # Правая колонка
+        self.right_frame = ctk.CTkFrame(
+            self.root, fg_color="#111214", corner_radius=0
+        )
+        self.right_frame.grid(row=0, column=1, sticky="nsew", padx=1, pady=1)
+
+        self.law_title_label = ctk.CTkLabel(
+            self.right_frame, text="Выберите элемент", 
+            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
+            text_color="#00f0ff"
+        )
+        self.law_title_label.pack(anchor="w", padx=25, pady=15)
+
+        self.textbox = ctk.CTkTextbox(
+            self.right_frame, font=ctk.CTkFont(size=13), 
+            fg_color="#1e1f22", border_width=1, border_color="#2b2d31"
+        )
+        self.textbox.pack(fill="both", expand=True, padx=25, pady=5)
+        self.textbox.configure(state="disabled")
+
+        self.action_frame = ctk.CTkFrame(
+            self.right_frame, fg_color="transparent"
+        )
+        self.action_frame.pack(fill="x", padx=25, pady=15)
+
+        self.btn_copy = ctk.CTkButton(
+            self.action_frame, text="📋 Скопировать", 
+            fg_color="#2b2d31", hover_color="#00f0ff", 
+            command=self.copy_law_text
+        )
+        self.btn_copy.pack(side="left", padx=5)
+
+        self.btn_ai = ctk.CTkButton(
+            self.action_frame, text="✨ Отыграть ИИ", 
+            fg_color="#1f538d", hover_color="#2ecc71", 
+            command=self.trigger_ai_action
+        )
+        self.btn_ai.pack(side="right", padx=5)
+
+        self.populate_list(self.all_laws)
+    def populate_list(self, laws_list):
+        """Обновление левого списка кнопок"""
+        for widget in self.scroll_list.winfo_children():
+            widget.destroy()
+
+        for law in laws_list:
+            prefix = "⭐ " if law.get("is_frequent") else ""
+            btn = ctk.CTkButton(
+                self.scroll_list, text=f"{prefix}{law['title']}",
+                anchor="w", fg_color="transparent", text_color="#ffffff",
+                hover_color="#2b2d31", height=32,
+                command=lambda item=law: self.display_law(item)
+            )
+            btn.pack(fill="x", pady=2, padx=5)
+
+    def display_law(self, law):
+        """Отображение текста элемента на экране"""
+        self.current_selected_law = law
+        self.law_title_label.configure(
+            text=law['title'], text_color="#00f0ff"
+        )
+        
+        self.textbox.configure(state="normal")
+        self.textbox.delete("0.0", "end")
+        
+        desc = law.get('description', law.get('protocol', law.get('text', '')))
+        self.textbox.insert("0.0", desc)
+        self.textbox.configure(state="disabled")
 
     def change_faction(self, selected_faction):
         app_config.set("current_faction", selected_faction)
-        print(f"[HelpeRP UI] Контекст переключен: {selected_faction}")
+        self.load_laws_database()
+        self.populate_list(self.all_laws)
+
+    def filter_laws(self, event=None):
+        """Фильтр локальной базы + живой интернет-поиск"""
+        query = self.search_entry.get().lower().strip()
+        if not query:
+            self.populate_list(self.all_laws)
+            return
+
+        filtered = [
+            l for l in self.all_laws 
+            if query in str(l.get('article', '')).lower() 
+            or query in l['title'].lower() 
+            or any(query in kw for kw in l.get('keywords', []))
+        ]
+        self.populate_list(filtered)
+
+        if len(filtered) == 0 and len(query) > 3:
+            self.law_title_label.configure(
+                text="🌐 Ищу в интернете...", text_color="#ff9900"
+            )
+            
+            def bg_search():
+                try:
+                    from core.online_search import search_law_online
+                    fac = self.faction_selector.get()
+                    txt = search_law_online(query, faction_context=fac)
+                    if txt:
+                        self.root.after(
+                            0, lambda: self.update_ui_with_online_data(query, txt)
+                        )
+                    else:
+                        self.root.after(
+                            0, lambda: self.law_title_label.configure(
+                                text="❌ Не найдено", text_color="red"
+                            )
+                        )
+                except Exception as e:
+                    print(f"Ошибка поиска: {e}")
+            
+            threading.Thread(target=bg_search, daemon=True).start()
+
+    def update_ui_with_online_data(self, query, text):
+        self.law_title_label.configure(
+            text=f"🌐 Из сети: {query}", text_color="#00f0ff"
+        )
+        self.textbox.configure(state="normal")
+        self.textbox.delete("0.0", "end")
+        self.textbox.insert("0.0", text)
+        self.textbox.configure(state="disabled")
+        self.current_selected_law = {"title": query, "description": text}
+
+    def copy_law_text(self):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.textbox.get("0.0", "end").strip())
+
+    def trigger_ai_action(self):
+        """Генерация RP-строк на основе текста на экране"""
+        current_text = self.textbox.get("0.0", "end").strip()
+        self.law_title_label.configure(
+            text="⏳ ИИ формирует отыгровку...", text_color="#ff9900"
+        )
+        self.root.update()
+        
+        def bg_ai():
+            try:
+                from core.ai_client import rp_ai
+                from core.hotkeys import send_rp_sequence
+                lines = rp_ai.generate_rp_commands(
+                    f"Сделай отыгровку по тексту:\n{current_text}"
+                )
+                self.root.after(
+                    0, lambda: self.law_title_label.configure(
+                        text="✅ Готово!", text_color="#2ecc71"
+                    )
+                )
+                send_rp_sequence(lines)
+            except Exception as e:
+                print(f"Ошибка ИИ: {e}")
+                
+        threading.Thread(target=bg_ai, daemon=True).start()
 
     def toggle_visibility(self):
         if self.is_visible:
@@ -142,45 +262,7 @@ class HelpeRPMainWindow:
             self.is_visible = False
         else:
             self.root.deiconify()
-            self.root.attributes("-topmost", True)
-            self.input_entry.focus()
             self.is_visible = True
 
-    def handle_submit(self, event=None):
-        user_query = self.input_entry.get().strip()
-        if not user_query:
-            return
-
-        # Меняем тему на «Процессинг» (Оранжевое свечение рамки)
-        self.main_frame.configure(border_color=self.color_processing)
-        self.title_label.configure(text="  |  ИИ генерирует отыгровки...", text_color=self.color_processing)
-        self.logo_rp.configure(text_color=self.color_processing)
-        self.root.update()
-
-        # Запрос к ИИ
-        generated_lines = rp_ai.generate_rp_commands(user_query)
-
-        # Очищаем ввод и меняем тему на «Успех» (Зеленое свечение)
-        self.input_entry.delete(0, 'end')
-        self.main_frame.configure(border_color=self.color_success)
-        self.title_label.configure(text="  |  Текст отправлен в игру!", text_color=self.color_success)
-        self.logo_rp.configure(text_color=self.color_success)
-        self.root.update()
-
-        # Отправка в игровой чат
-        send_rp_sequence(generated_lines)
-
-        # Авто-скрытие оверлея через 1.5 секунды
-        self.root.after(1500, self.reset_ui_status)
-
-    def reset_ui_status(self):
-        # Возвращаем красивый неоновый стиль оглавления
-        self.main_frame.configure(border_color=self.color_idle)
-        self.title_label.configure(text="  |  Система готова", text_color="#a0a0a0")
-        self.logo_rp.configure(text_color=self.color_idle)
-        if self.is_visible:
-            self.toggle_visibility()
-
     def start(self):
-        self.input_entry.focus()
         self.root.mainloop()

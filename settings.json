@@ -2,7 +2,7 @@
     "api_key": "YOUR_AI_API_KEY",
     "base_url": "https://openai.com",
     "model": "gpt-4o-mini",
-    "current_faction": "МЧС",
+    "current_faction": "Законодательство РФ",
     "character": {
         "name": "Иван Иванов",
         "rank": "Рядовой",

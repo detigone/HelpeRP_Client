@@ -12,6 +12,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from core.build_config import RELEASE_BUILD
 from core.paths import app_dir, is_frozen
 from core.updates import UpdateInfo
 from core.version import VERSION
@@ -51,12 +52,40 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _require_sha256(expected_sha256: str) -> str:
+    digest = (expected_sha256 or "").strip().lower()
+    if len(digest) != 64 or not all(c in "0123456789abcdef" for c in digest):
+        raise UpdateInstallError("В manifest отсутствует корректная sha256")
+    return digest
+
+
 def verify_package(path: Path, expected_sha256: str = "") -> bool:
     if not path.is_file():
         return False
     if not expected_sha256:
+        return not RELEASE_BUILD
+    return _sha256_file(path).lower() == _require_sha256(expected_sha256)
+
+
+def _allowed_download_url(url: str) -> bool:
+    u = (url or "").strip()
+    if u.startswith("https://"):
         return True
-    return _sha256_file(path).lower() == expected_sha256.strip().lower()
+    if RELEASE_BUILD:
+        return False
+    return u.startswith("file://") or Path(u).is_file()
+
+
+def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
+    dest = dest.resolve()
+    for member in zf.infolist():
+        name = member.filename.replace("\\", "/")
+        if name.startswith("/") or ".." in Path(name).parts:
+            raise UpdateInstallError(f"Небезопасный путь в архиве: {member.filename}")
+        target = (dest / name).resolve()
+        if dest not in target.parents and target != dest:
+            raise UpdateInstallError(f"Zip Slip заблокирован: {member.filename}")
+    zf.extractall(dest)
 
 
 def _download_http(url: str, dest: Path, progress=None) -> None:
@@ -92,13 +121,15 @@ def _copy_local(src: Path, dest: Path, progress=None) -> None:
 
 
 def download_update(info: UpdateInfo, progress=None, *, force: bool = False) -> Path:
-    """Скачивает пакет обновления. Возвращает путь к zip."""
     url = (info.download_url or "").strip()
     if not url:
         raise UpdateInstallError("В manifest не указан download_url")
+    if not _allowed_download_url(url):
+        raise UpdateInstallError("Разрешены только HTTPS-ссылки на обновления")
 
+    digest = _require_sha256(info.sha256)
     dest = _cache_path(info)
-    if dest.is_file() and not force and verify_package(dest, info.sha256):
+    if dest.is_file() and not force and verify_package(dest, digest):
         if progress:
             progress(dest.stat().st_size, dest.stat().st_size)
         return dest
@@ -108,7 +139,7 @@ def download_update(info: UpdateInfo, progress=None, *, force: bool = False) -> 
         if not src.is_file():
             raise UpdateInstallError(f"Локальный файл не найден: {src}")
         _copy_local(src, dest, progress)
-    elif url.startswith("http://") or url.startswith("https://"):
+    elif url.startswith("https://"):
         _download_http(url, dest, progress)
     else:
         src = Path(url)
@@ -117,7 +148,7 @@ def download_update(info: UpdateInfo, progress=None, *, force: bool = False) -> 
         else:
             raise UpdateInstallError(f"Неподдерживаемый URL: {url}")
 
-    if info.sha256 and not verify_package(dest, info.sha256):
+    if not verify_package(dest, digest):
         dest.unlink(missing_ok=True)
         raise UpdateInstallError("Контрольная сумма пакета не совпадает")
 
@@ -138,14 +169,13 @@ def _find_release_root(staging: Path) -> Path:
 
 
 def prepare_install(package_path: Path) -> Path:
-    """Распаковывает zip в staging. Возвращает папку с HelpeRP.exe."""
     if not package_path.is_file():
         raise UpdateInstallError("Пакет обновления не найден")
 
     staging = _staging_path()
     if package_path.suffix.lower() == ".zip":
         with zipfile.ZipFile(package_path) as zf:
-            zf.extractall(staging)
+            _safe_extract_zip(zf, staging)
     elif package_path.name.lower() == "helperp.exe":
         shutil.copy2(package_path, staging / "HelpeRP.exe")
     else:
@@ -158,7 +188,6 @@ def prepare_install(package_path: Path) -> Path:
 
 
 def launch_install_and_exit(source_root: Path) -> None:
-    """Запускает helper-скрипт и завершает приложение."""
     if not can_auto_install():
         raise UpdateInstallError("Автоустановка доступна только в собранном exe")
 

@@ -60,7 +60,7 @@ class LicenseDialog(ctk.CTkToplevel):
         key_row.pack(fill="x", pady=(4, 4))
         key_row.grid_columnconfigure(0, weight=1)
         self.key_entry = ctk.CTkEntry(
-            key_row, placeholder_text="HELPE-XXXX-XXXX-XXXXXXXX", height=38,
+            key_row, placeholder_text="HELPE-XXXX-XXXX-… (64 символа подписи)", height=38,
             font=T.FONT_BODY, fg_color=T.BG_INPUT, border_color=T.BORDER,
         )
         self.key_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))

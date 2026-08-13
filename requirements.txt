@@ -4,3 +4,4 @@ keyboard>=0.13.5
 openai>=1.0.0
 pydirectinput>=1.0.4
 pyperclip>=1.8.2
+cryptography>=42.0.0

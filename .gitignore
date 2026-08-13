@@ -3,6 +3,7 @@
 # Пользовательские данные (не коммитить!)
 settings.json
 .helperp_dev
+tools/.license_private.pem
 
 # Python
 __pycache__/

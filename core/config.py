@@ -125,9 +125,14 @@ class Config:
             self.save_config()
 
     def _sanitize(self):
+        from core.secrets import protect_secret, unprotect_secret
+
         self.settings["base_url"] = normalize_base_url(self.settings.get("base_url", ""))
-        if is_placeholder_api_key(self.settings.get("api_key", "")):
+        raw_key = unprotect_secret(self.settings.get("api_key", ""))
+        if is_placeholder_api_key(raw_key):
             self.settings["api_key"] = ""
+        else:
+            self.settings["api_key"] = raw_key
         if not self.settings.get("ai_provider"):
             from core.ai_providers import detect_provider
             self.settings["ai_provider"] = detect_provider(self.settings.get("base_url", ""))
@@ -142,11 +147,17 @@ class Config:
 
     def save_config(self):
         try:
+            from core.secrets import protect_secret
+
             folder = os.path.dirname(self.config_filename)
             if folder:
                 os.makedirs(folder, exist_ok=True)
+            to_save = copy.deepcopy(self.settings)
+            key = to_save.get("api_key", "")
+            if key and not is_placeholder_api_key(key):
+                to_save["api_key"] = protect_secret(key)
             with open(self.config_filename, "w", encoding="utf-8") as f:
-                json.dump(self.settings, f, ensure_ascii=False, indent=4)
+                json.dump(to_save, f, ensure_ascii=False, indent=4)
         except Exception as e:
             print(f"[Config] Не удалось сохранить: {e}")
 

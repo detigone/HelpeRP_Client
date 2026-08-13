@@ -134,6 +134,11 @@ def write_manifest(
         "file_size": size,
         "changelog": changelog.strip() or f"HelpeRP {version}",
     }
+    sys.path.insert(0, str(ROOT))
+    from tools.signing_private import ensure_keypair, sign_manifest
+
+    ensure_keypair()
+    data["signature"] = sign_manifest(data)
     MANIFEST_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=4) + "\n", encoding="utf-8")
 
     publish_manifest = RELEASES_DIR / "manifest.json"

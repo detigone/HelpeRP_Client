@@ -7,5 +7,6 @@
     "download_url": "https://example.com/helperp/releases/HelpeRP_1.1.0.zip",
     "sha256": "8e07288a775381528741da3b7187dbe53d030d280ae728a7cefd25abf07c2b2c",
     "file_size": 44693304,
-    "changelog": "HelpeRP 1.1.0\n\n• Автоматическая сборка релиза\n• Автообновление и установка в один клик\n• manifest.json с контрольной суммой sha256"
+    "changelog": "HelpeRP 1.1.0\n\n• Автоматическая сборка релиза\n• Автообновление и установка в один клик\n• manifest.json с контрольной суммой sha256",
+    "signature": "296A96DD7CC3E62BC1B4F7B2308A44D42587C05BFFA16E7E6676BB175A1AC375CE522FE853A760FDC22744B104C7C7CE780F2CF7F67B2E770DCCE4F96982B90F"
 }

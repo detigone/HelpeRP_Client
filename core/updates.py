@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from core.config import app_config
 from core.paths import bundle_dir
+from core.signing_public import is_trusted_update_url, verify_manifest
 from core.version import UPDATE_MANIFEST_URL, VERSION
 
 
@@ -60,21 +61,37 @@ def is_newer(remote: str, local: str) -> bool:
 
 def _manifest_url() -> str:
     cfg = app_config.get("updates", {}) or {}
-    return (cfg.get("manifest_url") or "").strip() or UPDATE_MANIFEST_URL
+    custom = (cfg.get("manifest_url") or "").strip()
+    if custom:
+        from core.build_config import RELEASE_BUILD
+        if RELEASE_BUILD and not is_trusted_update_url(custom):
+            return UPDATE_MANIFEST_URL
+        return custom
+    return UPDATE_MANIFEST_URL
 
 
 def _fetch_url(url: str, timeout: float = 8.0) -> dict | None:
     try:
+        from core.build_config import RELEASE_BUILD
+
+        if RELEASE_BUILD and url.startswith("file://"):
+            return None
         if url.startswith("file://"):
             path = url[7:]
             with open(path, encoding="utf-8") as f:
-                return json.load(f)
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": f"HelpeRP/{VERSION} UpdateChecker"},
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+                data = json.load(f)
+        else:
+            if RELEASE_BUILD and not url.startswith("https://"):
+                return None
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": f"HelpeRP/{VERSION} UpdateChecker"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        if not verify_manifest(data):
+            return None
+        return data
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
         return None
 
@@ -93,8 +110,13 @@ def _load_bundled_manifest() -> dict | None:
 def _parse_manifest(data: dict, source: str) -> UpdateInfo | None:
     if not data:
         return None
+    if source == "online" and not verify_manifest(data):
+        return None
     latest = str(data.get("version", "")).strip()
     if not latest:
+        return None
+    sha256 = str(data.get("sha256") or "").strip()
+    if not sha256 or len(sha256) != 64:
         return None
 
     dismissed = (app_config.get("updates", {}) or {}).get("dismissed_version", "")
@@ -159,6 +181,8 @@ def check_for_updates(*, force: bool = False) -> UpdateInfo | None:
 
     data = _load_bundled_manifest()
     if data:
+        if not verify_manifest(data):
+            return None
         info = _parse_manifest(data, "bundled")
         if info:
             info.available = False  # bundled — только fallback, не уведомляем

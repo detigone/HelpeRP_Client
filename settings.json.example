@@ -1,0 +1,49 @@
+{
+    "api_key": "",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini",
+    "ai_provider": "openai",
+    "current_faction": "Все базы",
+    "character": {
+        "name": "Иван Иванов",
+        "rank": "Рядовой",
+        "badge": "№0000",
+        "personality": "Вежливый, строго следует уставу, говорит уверенно"
+    },
+    "characters": [],
+    "active_character_id": "",
+    "game": {
+        "chat_key": "t"
+    },
+    "ui": {
+        "list_limit": 120,
+        "auto_send_ai": false,
+        "animations": true,
+        "theme": "helperp",
+        "use_faction_accent": true,
+        "custom_accent": ""
+    },
+    "hotkeys": {
+        "toggle_overlay": "shift+\\",
+        "hide_window": "ctrl+shift+h",
+        "submit_request": "enter"
+    },
+    "license": {
+        "eula_accepted": false,
+        "eula_version": "1.1"
+    },
+    "search": {
+        "wikipedia": true,
+        "online_fallback": true,
+        "rag": true
+    },
+    "updates": {
+        "auto_check": true,
+        "auto_download": true,
+        "check_interval_hours": 24,
+        "last_check": null,
+        "dismissed_version": "",
+        "manifest_url": ""
+    },
+    "recent": []
+}

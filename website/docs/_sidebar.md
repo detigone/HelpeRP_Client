@@ -1,0 +1,5 @@
+* [О проекте](index.md)
+* [Руководство](user_guide.md)
+* [Установка](install.md)
+* [Обновления](updates.md)
+* [FAQ](faq.md)

@@ -1,0 +1,54 @@
+HelpeRP — чек-лист продавца (v1.1)
+====================================
+
+ПЕРЕД ПРОДАЖЕЙ
+1. core/version.py — email, PURCHASE_URL, WEBSITE
+2. core/licensing.py — смените _LICENSE_SECRET на уникальную строку (32+ символов)
+3. legal/EULA_RU.txt — проверьте условия под вашу площадку
+
+ГЕНЕРАЦИЯ КЛЮЧЕЙ
+  py tools/generate_license_key.py          # универсальный
+  py tools/generate_license_key.py 10       # 10 универсальных
+  py tools/generate_license_key.py --bound  # под ваш ПК (тест)
+  py tools/generate_license_key.py --bound ABCD1234  # под ID покупателя
+
+ФОРМАТ КЛЮЧЕЙ (v1.1)
+  Универсальный:  HELPE-XXXX-XXXX-XXXXXXXX  (8 символов подписи)
+  Привязка к ПК:  HELPE-XXXX-XXXX-MMMMMMMM-XXXXXXXX
+
+ПОКУПАТЕЛЬ ПРИСЫЛАЕТ ID ПК из окна активации → вы генерируете --bound КОД
+
+СБОРКА ДЛЯ ПОКУПАТЕЛЯ — НЕ ВКЛЮЧАТЬ:
+  tools/
+  .helperp_dev
+  settings.json
+  .git/
+
+ВКЛЮЧИТЬ:
+  legal/  LICENSE  THIRD_PARTY_NOTICES.md  settings.json.example
+  assets/  data/  core/  gui/  run.py  requirements.txt
+
+РАЗРАБОТКА
+  Файл .helperp_dev в корне или HELPERP_DEV=1
+
+НА СТРАНИЦЕ ПРОДАЖИ УКАЗАТЬ:
+  • 1 ключ = 1 лицензия
+  • ИИ требует свой OpenAI API-ключ
+  • контент справочный для RP
+  • возврат по правилам площадки
+
+ОБНОВЛЕНИЯ (полностью автоматизировано)
+  Релиз одной командой:
+    py tools/release.py --bump patch
+  → собирает exe, zip, manifest.json с sha256
+
+  Публикация:
+    1. core/version.py → UPDATE_MANIFEST_URL
+    2. Загрузить dist/releases/HelpeRP_X.Y.Z.zip и manifest.json
+    3. Или: git tag v1.2.0 && git push origin v1.2.0 (GitHub Actions)
+
+  Локальный тест:
+    py tools/serve_updates.py
+    URL manifest: http://127.0.0.1:8765/manifest.json
+
+  У пользователя: авто-проверка, авто-скачивание, кнопка «Установить автоматически»

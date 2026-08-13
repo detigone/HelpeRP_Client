@@ -1,268 +1,1507 @@
 # HelpeRP_Client/gui/main_window.py
 import customtkinter as ctk
-import json
-import os
 import threading
-from core.config import app_config
+from pathlib import Path
+
+from core.config import app_config, effective_api_key
+from core.factions import FACTIONS, load_faction_items, get_faction
+from core.measures import load_measures
+from core.paths import icons_dir
+from core.search import filter_and_rank, item_blob
+from gui import theme as T
+from gui.ai_preview_dialog import AIPreviewDialog
+from gui.icons import faction_icon, ui_icon, preload
+from gui.measures_panel import MeasuresPanel
+from gui.settings_panel import SettingsPanel
+from gui.templates_panel import TemplatesPanel
+from gui.toast import show_toast
+from gui.responsive import AdaptiveWrap
+from gui.docs_dialog import show_docs
+from gui.update_dialog import show_update_dialog
+from gui.animations import (
+    Animator, LoadingDots, PulseBadge, animations_enabled,
+)
+
 
 class HelpeRPMainWindow:
     def __init__(self):
         ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("dark-blue")
+
+        self._icon_refs: list = []
+        preload()
+
+        from gui.theme_engine import load_theme_from_config
+        load_theme_from_config()
+
         self.root = ctk.CTk()
-        self.root.title("HelpeRP — База Знаний")
+        self.root.title("HelpeRP — База знаний RP")
+        self.root.configure(fg_color=T.BG_ROOT)
         self.root.attributes("-topmost", True)
-        
-        self.width = 950
-        self.height = 620
+        self._set_window_icon()
+
+        self.is_expanded = True
+        self.saved_geometry = None
+        self.all_items = []
+        self.filtered_items = []
+        self.current_item = None
+        self.current_faction = get_faction(
+            app_config.get("current_faction", FACTIONS[0]["name"])
+        )
+        from gui.theme_engine import effective_accent
+        self.accent, self._accent_hover = effective_accent(self.current_faction["accent"])
+        self.is_hidden = False
+        self.list_show_all = False
+        self._list_index = 0
+        self._settings_saved_callback = None
+        self._pending_update = None
+        self._detail_loader = None
+        self._badge_pulse = None
+        self.current_page = "database"
+        self.nav_buttons = {}
+        self.faction_buttons = {}
+        self.list_buttons = {}
+        self.selected_list_key = None
+        ui_cfg = app_config.get("ui", {})
+        self.list_limit = int(ui_cfg.get("list_limit", 120))
+
+        self._center_geometry(*T.EXPANDED_SIZE)
+        self.root.minsize(960, 600)
+
+        self._adaptive = AdaptiveWrap(self.root)
+        self._load_data()
+        self._build_ui()
+        self._apply_accent()
+        self._bind_keyboard_shortcuts()
+        self._bind_resize()
+        self._update_categories()
+        self._refresh_list()
+        self.root.after(200, self._adaptive.refresh)
+        self.root.after(2500, lambda: self._run_update_check(force=False))
+        self._schedule_update_checks()
+        if animations_enabled():
+            try:
+                self.root.attributes("-alpha", 0.0)
+                self.root.after(80, lambda: Animator.fade_window(self.root, 0.0, 1.0, 320))
+            except Exception:
+                pass
+
+    def _keep_icon(self, icon):
+        if icon is not None:
+            self._icon_refs.append(icon)
+        return icon
+
+    def _set_window_icon(self):
+        icon_path = Path(icons_dir()) / "logo.png"
+        if not icon_path.is_file():
+            icon_path = Path(icons_dir()) / "diamond.png"
+        if not icon_path.is_file():
+            return
+        try:
+            from PIL import Image, ImageTk
+            pil = Image.open(icon_path).convert("RGBA")
+            photo = ImageTk.PhotoImage(pil)
+            self.root.iconphoto(True, photo)
+            self._icon_refs.append(photo)
+        except Exception as e:
+            print(f"[HelpeRP] Не удалось установить иконку окна: {e}")
+
+    def _center_geometry(self, w, h):
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
-        x = (sw // 2) - (self.width // 2)
-        y = (sh // 2) - (self.height // 2)
-        self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
-
-        self.is_visible = True
-        self.all_laws = []
-        self.load_laws_database()
-        self.create_ui()
-
-    def load_laws_database(self):
-        """Загрузка выбранной базы данных фракции"""
-        fac = app_config.get("current_faction", "Законодательство РФ")
-        
-        if fac == "Законодательство РФ":
-            path = "data/legislation_rf.json"
-        elif fac == "МЧС":
-            path = "data/mchs.json"
+        if h <= 60:
+            x = (sw - w) // 2
+            y = 12
         else:
-            path = "data/smp.json"
+            x = (sw - w) // 2
+            y = (sh - h) // 2
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
 
-        if not os.path.exists(path):
-            self.load_fallback_data()
+    def _load_data(self):
+        self.all_items, self.current_faction = load_faction_items(
+            self.current_faction["name"]
+        )
+        self.filtered_items = list(self.all_items)
+        try:
+            from core.rag_search import ensure_rag_index
+            ensure_rag_index(self.all_items)
+        except Exception:
+            pass
+
+    def _refresh_character_box(self):
+        from core.characters import character_labels, get_active_character
+        labels = character_labels() or ["Основной"]
+        self.character_box.configure(values=labels)
+        active = get_active_character()
+        label = active.get("label") or active.get("name") or labels[0]
+        if label in labels:
+            self.character_box.set(label)
+
+    def _on_character_changed(self, label: str):
+        from core.characters import character_id_by_label, set_active_character
+        cid = character_id_by_label(label)
+        if cid and set_active_character(cid):
+            show_toast(self.root, f"Персонаж: {label}", accent=self.accent)
+
+    def _build_ui(self):
+        self.compact_frame = ctk.CTkFrame(
+            self.root,
+            fg_color=T.BG_SIDEBAR,
+            corner_radius=T.RADIUS,
+            border_width=1,
+            border_color=T.BORDER,
+        )
+        self._build_compact()
+
+        self.expanded_frame = ctk.CTkFrame(self.root, fg_color=T.BG_ROOT, corner_radius=0)
+        self.expanded_frame.pack(fill="both", expand=True)
+        self.expanded_frame.grid_columnconfigure(1, weight=1)
+        self.expanded_frame.grid_rowconfigure(0, weight=1)
+        self._build_sidebar()
+        self._build_main()
+
+    def _build_compact(self):
+        inner = ctk.CTkFrame(self.compact_frame, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=10, pady=8)
+
+        self.compact_accent = ctk.CTkFrame(
+            inner, width=4, fg_color=self.accent, corner_radius=2
+        )
+        self.compact_accent.pack(side="left", fill="y", padx=(0, 10))
+
+        self.compact_faction_icon = ctk.CTkLabel(inner, text="", width=T.ICON_MD)
+        self.compact_faction_icon.pack(side="left", padx=(0, 6))
+        self._update_compact_faction_icon()
+
+        self.compact_search = ctk.CTkEntry(
+            inner,
+            placeholder_text="Быстрый поиск…",
+            height=32,
+            font=T.FONT_SMALL,
+            fg_color=T.BG_INPUT,
+            border_color=T.BORDER,
+            width=220,
+        )
+        self.compact_search.pack(side="left", padx=(0, 8))
+        self.compact_search.bind("<KeyRelease>", self._on_compact_search)
+        self.compact_search.bind("<Return>", lambda e: self._set_mode(True))
+
+        self.compact_preview = ctk.CTkLabel(
+            inner,
+            text="",
+            font=T.FONT_TINY,
+            text_color=T.TEXT_MUTED,
+            anchor="w",
+        )
+        self.compact_preview.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        self.compact_stats = ctk.CTkLabel(
+            inner, text="", font=T.FONT_TINY, text_color=T.TEXT_MUTED, width=80
+        )
+        self.compact_stats.pack(side="right", padx=(0, 6))
+
+        expand_icon = self._keep_icon(ui_icon("expand", T.ICON_MD))
+        self.btn_expand = ctk.CTkButton(
+            inner,
+            text="",
+            image=expand_icon,
+            width=36,
+            height=32,
+            command=lambda: self._set_mode(True),
+        )
+        self.btn_expand.pack(side="right")
+        self._update_compact_bar()
+
+    def _build_sidebar(self):
+        self.sidebar = ctk.CTkFrame(
+            self.expanded_frame, width=240, fg_color=T.BG_SIDEBAR, corner_radius=0
+        )
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid_propagate(False)
+        sidebar = self.sidebar
+
+        header = ctk.CTkFrame(sidebar, fg_color="transparent")
+        header.pack(fill="x", padx=T.PAD, pady=(T.PAD, T.PAD_SM))
+
+        logo_row = ctk.CTkFrame(header, fg_color="transparent")
+        logo_row.pack(fill="x", anchor="w")
+
+        logo_icon = self._keep_icon(ui_icon("app", T.ICON_LG))
+        if logo_icon:
+            ctk.CTkLabel(logo_row, text="", image=logo_icon).pack(side="left", padx=(0, 8))
+
+        title_col = ctk.CTkFrame(logo_row, fg_color="transparent")
+        title_col.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            title_col,
+            text="HelpeRP",
+            font=T.FONT_TITLE,
+            text_color=T.TEXT_PRIMARY,
+            anchor="w",
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_col,
+            text="База знаний для RP",
+            font=T.FONT_TINY,
+            text_color=T.TEXT_MUTED,
+            anchor="w",
+        ).pack(anchor="w", pady=(2, 0))
+
+        self.accent_bar = ctk.CTkFrame(
+            header, height=3, fg_color=self.accent, corner_radius=2
+        )
+        self.accent_bar.pack(fill="x", pady=(T.PAD_SM, 0))
+
+        char_row = ctk.CTkFrame(header, fg_color="transparent")
+        char_row.pack(fill="x", pady=(T.PAD_SM, 0))
+        ctk.CTkLabel(char_row, text="Персонаж", font=T.FONT_TINY, text_color=T.TEXT_MUTED).pack(anchor="w")
+        from core.characters import character_labels, get_active_character, set_active_character, character_id_by_label
+        self._char_id_by_label = character_id_by_label
+        labels = character_labels() or ["Основной"]
+        self.character_box = ctk.CTkComboBox(
+            char_row, values=labels, height=32, font=T.FONT_TINY, fg_color=T.BG_INPUT,
+            command=self._on_character_changed,
+        )
+        self.character_box.pack(fill="x", pady=(4, 0))
+        active = get_active_character()
+        self.character_box.set(active.get("label") or active.get("name") or labels[0])
+
+        ctk.CTkLabel(
+            sidebar, text="РАЗДЕЛЫ", font=T.FONT_TINY, text_color=T.TEXT_MUTED
+        ).pack(anchor="w", padx=T.PAD, pady=(T.PAD_SM, 4))
+
+        nav = ctk.CTkFrame(sidebar, fg_color="transparent")
+        nav.pack(fill="x", padx=8, pady=(0, T.PAD_SM))
+
+        for page_id, label, icon_key in (
+            ("database", "База знаний", "home"),
+            ("measures", "Меры", "rules"),
+            ("templates", "Шаблоны", "bolt"),
+            ("settings", "Настройки", "settings"),
+        ):
+            nav_icon = self._keep_icon(ui_icon(icon_key, T.ICON_SM))
+            selected = page_id == self.current_page
+            btn = ctk.CTkButton(
+                nav,
+                text=f"  {label}",
+                image=nav_icon,
+                compound="left",
+                anchor="w",
+                height=36,
+                font=T.FONT_SMALL,
+                fg_color=T.BG_SELECTED if selected else T.BG_CARD,
+                hover_color=T.BG_HOVER,
+                text_color=T.TEXT_PRIMARY,
+                corner_radius=T.RADIUS_SM,
+                border_width=2 if selected else 0,
+                border_color=self.accent if selected else T.BORDER,
+                command=lambda p=page_id: self._switch_page(p),
+            )
+            btn.pack(fill="x", pady=2, padx=4)
+            self.nav_buttons[page_id] = btn
+
+        ctk.CTkLabel(
+            sidebar, text="НЕДАВНИЕ", font=T.FONT_TINY, text_color=T.TEXT_MUTED
+        ).pack(anchor="w", padx=T.PAD, pady=(T.PAD_SM, 2))
+
+        self.recent_frame = ctk.CTkFrame(sidebar, fg_color="transparent")
+        self.recent_frame.pack(fill="x", padx=8, pady=(0, T.PAD_SM))
+        self._refresh_recent_sidebar()
+
+        ctk.CTkLabel(
+            sidebar, text="ФРАКЦИИ", font=T.FONT_TINY, text_color=T.TEXT_MUTED
+        ).pack(anchor="w", padx=T.PAD, pady=(T.PAD_SM, 4))
+
+        scroll = ctk.CTkScrollableFrame(sidebar, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        saved = app_config.get("current_faction", FACTIONS[0]["name"])
+        for fac in FACTIONS:
+            fac_icon = self._keep_icon(faction_icon(fac["id"], T.ICON_MD))
+            selected = fac["name"] == saved
+            btn = ctk.CTkButton(
+                scroll,
+                text=fac["name"],
+                image=fac_icon,
+                compound="left",
+                anchor="w",
+                height=38,
+                font=T.FONT_SMALL,
+                fg_color=T.BG_SELECTED if selected else T.BG_CARD,
+                hover_color=T.BG_HOVER,
+                text_color=T.TEXT_PRIMARY,
+                corner_radius=T.RADIUS_SM,
+                border_width=2 if selected else 0,
+                border_color=fac["accent"] if selected else T.BORDER,
+                command=lambda f=fac: self._select_faction(f),
+            )
+            btn.pack(fill="x", pady=2, padx=4)
+            self.faction_buttons[fac["name"]] = btn
+
+        hotkey = app_config.get("hotkeys", {}).get("toggle_overlay", "shift+\\")
+        hide_hk = app_config.get("hotkeys", {}).get("hide_window", "ctrl+shift+h")
+        self._sidebar_footer = ctk.CTkFrame(sidebar, fg_color=T.BG_CARD, corner_radius=T.RADIUS_SM)
+        self._sidebar_footer.pack(fill="x", padx=T.PAD, pady=(0, T.PAD))
+        footer = self._sidebar_footer
+
+        hints = ctk.CTkFrame(footer, fg_color="transparent")
+        hints.pack(fill="x", padx=T.PAD_SM, pady=(T.PAD_SM, 4))
+        self.hotkey_label = ctk.CTkLabel(
+            hints, text=f"{hotkey.upper()} — режим",
+            font=T.FONT_TINY, text_color=T.TEXT_MUTED, anchor="w",
+        )
+        self.hotkey_label.pack(anchor="w")
+        self.hide_hotkey_label = ctk.CTkLabel(
+            hints, text=f"{hide_hk.upper()} — скрыть окно",
+            font=T.FONT_TINY, text_color=T.TEXT_MUTED, anchor="w",
+        )
+        self.hide_hotkey_label.pack(anchor="w")
+
+        from core.version import COPYRIGHT, VERSION
+
+        ver_row = ctk.CTkFrame(footer, fg_color="transparent")
+        ver_row.pack(fill="x", padx=T.PAD_SM, pady=(0, 2))
+        ctk.CTkLabel(
+            ver_row, text=f"v{VERSION}", font=T.FONT_TINY, text_color=T.TEXT_MUTED,
+        ).pack(side="left")
+        self.update_badge = ctk.CTkButton(
+            ver_row, text="", height=22, font=T.FONT_TINY, fg_color=T.BG_HOVER,
+            hover_color=T.BORDER, text_color=T.WARNING, command=lambda: self._run_update_check(force=True),
+        )
+        self.update_badge.pack(side="left", padx=(8, 0))
+        self.update_badge.pack_forget()
+        self._badge_pulse = PulseBadge(self.update_badge, self.root, T.WARNING)
+        self.footer_copy = ctk.CTkLabel(
+            footer, text=COPYRIGHT, font=("Segoe UI", 8), text_color=T.TEXT_MUTED, justify="left",
+        )
+        self.footer_copy.pack(anchor="w", padx=T.PAD_SM, pady=(0, 4))
+        self._adaptive.track(self.footer_copy, sidebar, padding=24)
+
+        footer_inner = ctk.CTkFrame(footer, fg_color="transparent")
+        footer_inner.pack(fill="x", padx=T.PAD_SM, pady=(0, T.PAD_SM))
+
+        settings_icon = self._keep_icon(ui_icon("settings", T.ICON_SM))
+        ctk.CTkButton(
+            footer_inner,
+            text="  Настройки",
+            image=settings_icon,
+            compound="left",
+            height=32,
+            font=T.FONT_TINY,
+            fg_color=T.BG_HOVER,
+            hover_color=T.BORDER,
+            command=lambda: self._switch_page("settings"),
+        ).pack(fill="x", pady=(0, 4))
+
+        docs_icon = self._keep_icon(ui_icon("info", T.ICON_SM))
+        ctk.CTkButton(
+            footer_inner,
+            text="  Справка",
+            image=docs_icon,
+            compound="left",
+            height=32,
+            font=T.FONT_TINY,
+            fg_color=T.BG_HOVER,
+            hover_color=T.BORDER,
+            command=lambda: show_docs(self.root),
+        ).pack(fill="x")
+
+    def _refresh_recent_sidebar(self):
+        for w in self.recent_frame.winfo_children():
+            w.destroy()
+        recent = app_config.get("recent", [])[:6]
+        if not recent:
+            ctk.CTkLabel(
+                self.recent_frame, text="Пока пусто", font=T.FONT_TINY, text_color=T.TEXT_MUTED,
+            ).pack(anchor="w", padx=4)
+            return
+        for rec in recent:
+            title = rec.get("title", "—")
+            short = title if len(title) <= 28 else title[:25] + "…"
+            ctk.CTkButton(
+                self.recent_frame, text=short, anchor="w", height=28, font=T.FONT_TINY,
+                fg_color=T.BG_CARD, hover_color=T.BG_HOVER, text_color=T.TEXT_SECONDARY,
+                corner_radius=T.RADIUS_SM,
+                command=lambda r=rec: self._open_recent(r),
+            ).pack(fill="x", pady=1, padx=4)
+
+    def _open_recent(self, rec: dict):
+        self._switch_page("database")
+        fac_name = rec.get("faction", self.current_faction["name"])
+        fac = get_faction(fac_name)
+        if fac["name"] != self.current_faction["name"]:
+            self._select_faction(fac)
+        key = rec.get("key")
+        for item in self.all_items:
+            if self._item_key(item) == key:
+                self._show_item(item, key)
+                return
+        self.search_entry.delete(0, "end")
+        self.search_entry.insert(0, rec.get("title", ""))
+        self._on_filter()
+
+    def _switch_page(self, page: str):
+        if page == self.current_page and page != "settings":
             return
 
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            
-            if isinstance(data, dict) and "codes" in data:
-                flat = []
-                for c_name, arts in data["codes"].items():
-                    for a in arts:
-                        a["title"] = f"[{c_name[:5]}] {a['title']}"
-                        flat.append(a)
-                self.all_laws = flat
-            elif isinstance(data, dict) and "emergency_protocols" in data:
-                self.all_laws = data["emergency_protocols"]
-            elif isinstance(data, dict) and "medical_protocols" in data:
-                self.all_laws = data["medical_protocols"]
+        leaving_settings = self.current_page == "settings" and page != "settings"
+
+        def apply():
+            if leaving_settings:
+                app_config.load_config()
+                from gui.theme_engine import load_theme_from_config
+                load_theme_from_config()
+                self.apply_visual_theme()
+
+            self.current_page = page
+            pages = {
+                "database": self.page_database,
+                "measures": self.page_measures,
+                "templates": self.page_templates,
+                "settings": self.page_settings,
+            }
+            for name, frame in pages.items():
+                if name == page:
+                    frame.grid()
+                else:
+                    frame.grid_remove()
+
+            for name, btn in self.nav_buttons.items():
+                selected = name == page
+                btn.configure(
+                    fg_color=T.BG_SELECTED if selected else T.BG_CARD,
+                    border_width=2 if selected else 0,
+                    border_color=self.accent if selected else T.BORDER,
+                )
+
+            self._update_page_header()
+
+            if page == "settings":
+                self.page_settings.reload_from_config()
+            elif page == "database":
+                self.status_bar.grid()
             else:
-                self.all_laws = data if isinstance(data, list) else []
-        except Exception as e:
-            print(f"[Ошибка JSON]: {e}")
-            self.load_fallback_data()
+                self.status_bar.grid_remove()
 
-    def load_fallback_data(self):
-        """Резервные данные если файлов нет на диске"""
-        self.all_laws = [
-            {"article": "105", "title": "Статья 105 УК РФ", 
-             "description": "Убийство.", "is_frequent": True},
-            {"article": "228", "title": "Статья 228 УК РФ", 
-             "description": "Наркотики.", "is_frequent": True}
-        ]
-    def create_ui(self):
-        """Создание сетки и элементов управления"""
-        self.root.grid_columnconfigure(0, weight=0, minsize=340)
-        self.root.grid_columnconfigure(1, weight=1)
-        self.root.grid_rowconfigure(0, weight=1)
+            if animations_enabled():
+                Animator.flash_bar(self.accent_bar, self.root, self.accent)
 
-        # Левая колонка
-        self.left_frame = ctk.CTkFrame(
-            self.root, fg_color="#1e1f22", corner_radius=0
+        if animations_enabled() and hasattr(self, "pages"):
+            def nudge(t, _):
+                pad = int(10 * (1 - abs(t * 2 - 1)))
+                self.pages.grid_configure(padx=pad)
+
+            Animator.tween(self.root, 170, nudge, on_done=apply)
+        else:
+            apply()
+
+    def _update_page_header(self):
+        page = self.current_page
+        if page == "database":
+            self._update_header_faction_icon()
+            self.header_faction_icon.grid()
+            self.faction_title.configure(text=self.current_faction["name"])
+            self.faction_sub.configure(text=self.current_faction.get("subtitle", ""))
+            self.stats_label.configure(text=self._stats_text())
+            self.stats_label.grid()
+            self.faction_sub.grid()
+        elif page == "measures":
+            rules_icon = self._keep_icon(ui_icon("rules", T.ICON_LG))
+            if rules_icon:
+                self.header_faction_icon.configure(image=rules_icon)
+            self.header_faction_icon.grid()
+            self.faction_title.configure(text="Меры и наказания")
+            self.faction_sub.configure(
+                text=f"Справочник из законодательства · {len(load_measures())} статей"
+            )
+            self.stats_label.grid_remove()
+            self.faction_sub.grid()
+        elif page == "templates":
+            tpl_icon = self._keep_icon(ui_icon("bolt", T.ICON_LG))
+            if tpl_icon:
+                self.header_faction_icon.configure(image=tpl_icon)
+            self.header_faction_icon.grid()
+            self.faction_title.configure(text="Шаблоны отыгровок")
+            self.faction_sub.configure(text="Готовые /me и /do — без ИИ и API-ключа")
+            self.stats_label.grid_remove()
+            self.faction_sub.grid()
+        else:
+            settings_icon = self._keep_icon(ui_icon("settings", T.ICON_LG))
+            if settings_icon:
+                self.header_faction_icon.configure(image=settings_icon)
+            self.header_faction_icon.grid()
+            self.faction_title.configure(text="Настройки HelpeRP")
+            self.faction_sub.configure(text="ИИ, персонаж, хоткеи, интерфейс")
+            self.stats_label.grid_remove()
+            self.faction_sub.grid()
+
+    def _build_main(self):
+        self.main = ctk.CTkFrame(self.expanded_frame, fg_color=T.BG_ROOT, corner_radius=0)
+        self.main.grid(row=0, column=1, sticky="nsew")
+        self.main.grid_columnconfigure(0, weight=1)
+        self.main.grid_columnconfigure(1, weight=2)
+        self.main.grid_rowconfigure(2, weight=1)
+
+        top = ctk.CTkFrame(self.main, fg_color="transparent")
+        top.grid(row=0, column=0, columnspan=2, sticky="ew", padx=T.PAD, pady=(T.PAD, 4))
+
+        header_left = ctk.CTkFrame(top, fg_color="transparent")
+        header_left.pack(side="left", fill="x", expand=True)
+
+        title_row = ctk.CTkFrame(header_left, fg_color="transparent")
+        title_row.pack(anchor="w")
+
+        self.header_faction_icon = ctk.CTkLabel(title_row, text="", width=T.ICON_LG)
+        self.header_faction_icon.pack(side="left", padx=(0, 8))
+
+        self.faction_title = ctk.CTkLabel(
+            title_row,
+            text=self.current_faction["name"],
+            font=T.FONT_HEADING,
+            text_color=T.TEXT_PRIMARY,
+            anchor="w",
         )
-        self.left_frame.grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
-        
-        self.faction_selector = ctk.CTkComboBox(
-            self.left_frame,
-            values=["Законодательство РФ", "МЧС", "СМП"],
-            height=32, command=self.change_faction
+        self.faction_title.pack(side="left")
+        self._header_left = header_left
+        self._update_header_faction_icon()
+        self._adaptive.track(self.faction_title, header_left, padding=48)
+
+        collapse_icon = self._keep_icon(ui_icon("collapse", T.ICON_SM))
+        self.btn_collapse = ctk.CTkButton(
+            top,
+            text="Свернуть",
+            image=collapse_icon,
+            compound="left",
+            width=110,
+            height=28,
+            font=T.FONT_TINY,
+            fg_color=T.BG_HOVER,
+            hover_color=T.BORDER,
+            command=lambda: self._set_mode(False),
         )
-        self.faction_selector.pack(fill="x", padx=15, pady=(15, 5))
-        self.faction_selector.set(
-            app_config.get("current_faction", "Законодательство РФ")
+        self.btn_collapse.pack(side="right", padx=(8, 0))
+
+        self.stats_label = ctk.CTkLabel(
+            top, text=self._stats_text(), font=T.FONT_SMALL, text_color=T.TEXT_SECONDARY
         )
-        
+        self.stats_label.pack(side="right")
+
+        self.faction_sub = ctk.CTkLabel(
+            self.main,
+            text=self.current_faction.get("subtitle", ""),
+            font=T.FONT_TINY,
+            text_color=T.TEXT_MUTED,
+            anchor="w",
+            justify="left",
+        )
+        self.faction_sub.grid(
+            row=1, column=0, columnspan=2, sticky="ew", padx=T.PAD, pady=(0, T.PAD_SM)
+        )
+        self._adaptive.track(self.faction_sub, self.main, padding=T.PAD * 2)
+
+        self.pages = ctk.CTkFrame(self.main, fg_color="transparent")
+        self.pages.grid(row=2, column=0, columnspan=2, sticky="nsew")
+        self.pages.grid_columnconfigure(0, weight=1)
+        self.pages.grid_rowconfigure(0, weight=1)
+
+        self.page_database = ctk.CTkFrame(self.pages, fg_color="transparent")
+        self.page_measures = MeasuresPanel(self.pages, accent=self.accent, adaptive=self._adaptive)
+        self.page_templates = TemplatesPanel(self.pages, accent=self.accent)
+        self.page_settings = SettingsPanel(
+            self.pages,
+            on_saved=self._on_settings_saved,
+            on_check_updates=self._run_update_check,
+            on_theme_preview=self._preview_theme,
+            accent=self.accent,
+        )
+
+        for frame in (self.page_database, self.page_measures, self.page_templates, self.page_settings):
+            frame.grid(row=0, column=0, sticky="nsew")
+
+        self.page_database.grid_columnconfigure(0, weight=1, minsize=260)
+        self.page_database.grid_columnconfigure(1, weight=2, minsize=280)
+        self.page_database.grid_rowconfigure(1, weight=1)
+        self.page_templates.grid_columnconfigure(0, weight=1)
+        self.page_templates.grid_rowconfigure(0, weight=1)
+
+        self.page_settings.grid_columnconfigure(0, weight=1)
+        self.page_settings.grid_rowconfigure(0, weight=1)
+
+        self.pages.grid_rowconfigure(0, weight=1)
+
+        self._build_database_page()
+        self._switch_page("database")
+
+    def _build_database_page(self):
+        db = self.page_database
+
+        toolbar = ctk.CTkFrame(db, fg_color="transparent")
+        toolbar.grid(
+            row=0, column=0, columnspan=2, sticky="ew", padx=T.PAD, pady=(0, T.PAD_SM)
+        )
+        toolbar.grid_columnconfigure(0, weight=1)
+        toolbar.grid_columnconfigure(1, weight=0)
+
+        search_wrap = ctk.CTkFrame(toolbar, fg_color="transparent")
+        search_wrap.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        search_wrap.grid_columnconfigure(0, weight=1)
+
         self.search_entry = ctk.CTkEntry(
-            self.left_frame, placeholder_text="🔍 Поиск...", height=35
+            search_wrap,
+            placeholder_text="Поиск по названию, тексту, ключевым словам…",
+            height=40,
+            font=T.FONT_BODY,
+            fg_color=T.BG_INPUT,
+            border_color=T.BORDER,
         )
-        self.search_entry.pack(fill="x", padx=15, pady=10)
-        self.search_entry.bind("<KeyRelease>", self.filter_laws)
+        self.search_entry.grid(row=0, column=0, sticky="ew")
+        self.search_entry.bind("<KeyRelease>", self._on_filter)
 
-        self.scroll_list = ctk.CTkScrollableFrame(
-            self.left_frame, fg_color="transparent"
+        self.btn_clear_search = ctk.CTkButton(
+            search_wrap,
+            text="✕",
+            width=32,
+            height=32,
+            font=T.FONT_SMALL,
+            fg_color=T.BG_HOVER,
+            hover_color=T.BORDER,
+            command=self._clear_search,
         )
-        self.scroll_list.pack(fill="both", expand=True, padx=5, pady=(0, 10))
+        self.btn_clear_search.grid(row=0, column=1, padx=(6, 0))
 
-        # Правая колонка
-        self.right_frame = ctk.CTkFrame(
-            self.root, fg_color="#111214", corner_radius=0
-        )
-        self.right_frame.grid(row=0, column=1, sticky="nsew", padx=1, pady=1)
+        filters = ctk.CTkFrame(toolbar, fg_color="transparent")
+        filters.grid(row=1, column=0, columnspan=2, sticky="ew")
+        filters.grid_columnconfigure(0, weight=1)
 
-        self.law_title_label = ctk.CTkLabel(
-            self.right_frame, text="Выберите элемент", 
-            font=ctk.CTkFont(family="Segoe UI", size=18, weight="bold"),
-            text_color="#00f0ff"
+        self.category_box = ctk.CTkComboBox(
+            filters,
+            values=["Все категории"],
+            width=180,
+            height=40,
+            font=T.FONT_SMALL,
+            fg_color=T.BG_INPUT,
+            border_color=T.BORDER,
+            command=self._on_filter,
         )
-        self.law_title_label.pack(anchor="w", padx=25, pady=15)
+        self.category_box.grid(row=0, column=0, sticky="w", padx=(0, T.PAD_SM))
+        self.category_box.set("Все категории")
+
+        freq_frame = ctk.CTkFrame(filters, fg_color="transparent")
+        freq_frame.grid(row=0, column=1, sticky="w")
+
+        verified_icon = self._keep_icon(ui_icon("frequent", T.ICON_SM))
+        if verified_icon:
+            ctk.CTkLabel(freq_frame, text="", image=verified_icon).pack(
+                side="left", padx=(0, 4)
+            )
+
+        self.frequent_only = ctk.CTkCheckBox(
+            freq_frame,
+            text="Частые",
+            font=T.FONT_SMALL,
+            text_color=T.TEXT_SECONDARY,
+            command=self._on_filter,
+        )
+        self.frequent_only.pack(side="left")
+
+        self._db_list_panel = ctk.CTkFrame(
+            db,
+            fg_color=T.BG_PANEL,
+            corner_radius=T.RADIUS,
+            border_width=1,
+            border_color=T.BORDER,
+        )
+        self._db_list_panel.grid(
+            row=1, column=0, sticky="nsew", padx=(T.PAD, T.PAD_SM), pady=(0, T.PAD)
+        )
+        self._db_list_panel.grid_rowconfigure(0, weight=1)
+        self._db_list_panel.grid_columnconfigure(0, weight=1)
+
+        self.scroll_list = ctk.CTkScrollableFrame(self._db_list_panel, fg_color="transparent")
+        self.scroll_list.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+
+        self._db_detail_panel = ctk.CTkFrame(
+            db,
+            fg_color=T.BG_PANEL,
+            corner_radius=T.RADIUS,
+            border_width=1,
+            border_color=T.BORDER,
+        )
+        self._db_detail_panel.grid(
+            row=1, column=1, sticky="nsew", padx=(T.PAD_SM, T.PAD), pady=(0, T.PAD)
+        )
+        self._db_detail_panel.grid_rowconfigure(2, weight=1)
+        self._db_detail_panel.grid_columnconfigure(0, weight=1)
+        detail_panel = self._db_detail_panel
+
+        self.detail_title = ctk.CTkLabel(
+            detail_panel,
+            text="Выберите запись",
+            font=("Segoe UI", 17, "bold"),
+            text_color=T.TEXT_PRIMARY,
+            anchor="w",
+            justify="left",
+        )
+        self.detail_title.grid(row=0, column=0, sticky="ew", padx=T.PAD, pady=(T.PAD, 2))
+
+        self.detail_meta = ctk.CTkLabel(
+            detail_panel,
+            text="",
+            font=T.FONT_TINY,
+            text_color=T.TEXT_MUTED,
+            anchor="w",
+            justify="left",
+        )
+        self.detail_meta.grid(row=1, column=0, sticky="ew", padx=T.PAD, pady=(0, 4))
+
+        self._adaptive.track(self.detail_title, detail_panel, padding=T.PAD * 2)
+        self._adaptive.track(self.detail_meta, detail_panel, padding=T.PAD * 2)
+        self._detail_loader = LoadingDots(self.detail_title)
 
         self.textbox = ctk.CTkTextbox(
-            self.right_frame, font=ctk.CTkFont(size=13), 
-            fg_color="#1e1f22", border_width=1, border_color="#2b2d31"
+            detail_panel,
+            font=T.FONT_BODY,
+            fg_color=T.BG_CARD,
+            border_width=1,
+            border_color=T.BORDER,
+            text_color=T.TEXT_PRIMARY,
+            wrap="word",
         )
-        self.textbox.pack(fill="both", expand=True, padx=25, pady=5)
+        self.textbox.grid(row=2, column=0, sticky="nsew", padx=T.PAD, pady=T.PAD_SM)
         self.textbox.configure(state="disabled")
 
-        self.action_frame = ctk.CTkFrame(
-            self.right_frame, fg_color="transparent"
-        )
-        self.action_frame.pack(fill="x", padx=25, pady=15)
+        actions = ctk.CTkFrame(detail_panel, fg_color="transparent")
+        actions.grid(row=3, column=0, sticky="ew", padx=T.PAD, pady=(0, T.PAD))
 
-        self.btn_copy = ctk.CTkButton(
-            self.action_frame, text="📋 Скопировать", 
-            fg_color="#2b2d31", hover_color="#00f0ff", 
-            command=self.copy_law_text
-        )
-        self.btn_copy.pack(side="left", padx=5)
+        copy_icon = self._keep_icon(ui_icon("copy", T.ICON_MD))
+        ctk.CTkButton(
+            actions,
+            text="Копировать",
+            image=copy_icon,
+            compound="left",
+            width=140,
+            height=36,
+            font=T.FONT_SMALL,
+            fg_color=T.BG_HOVER,
+            hover_color=T.BORDER,
+            command=self.copy_law_text,
+        ).pack(side="left")
 
+        ai_icon = self._keep_icon(ui_icon("ai", T.ICON_MD))
         self.btn_ai = ctk.CTkButton(
-            self.action_frame, text="✨ Отыграть ИИ", 
-            fg_color="#1f538d", hover_color="#2ecc71", 
-            command=self.trigger_ai_action
+            actions,
+            text="Отыграть ИИ",
+            image=ai_icon,
+            compound="left",
+            width=150,
+            height=36,
+            font=T.FONT_SMALL,
+            command=self.trigger_ai_action,
         )
-        self.btn_ai.pack(side="right", padx=5)
+        self.btn_ai.pack(side="right")
 
-        self.populate_list(self.all_laws)
-    def populate_list(self, laws_list):
-        """Обновление левого списка кнопок"""
-        for widget in self.scroll_list.winfo_children():
-            widget.destroy()
+        self.status_bar = ctk.CTkLabel(
+            db, text="Ctrl+F — поиск  ·  ↑↓ — навигация  ·  Esc — сброс",
+            font=T.FONT_TINY, text_color=T.TEXT_MUTED, anchor="w",
+        )
+        self.status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=T.PAD, pady=(0, 8))
 
-        for law in laws_list:
-            prefix = "⭐ " if law.get("is_frequent") else ""
-            btn = ctk.CTkButton(
-                self.scroll_list, text=f"{prefix}{law['title']}",
-                anchor="w", fg_color="transparent", text_color="#ffffff",
-                hover_color="#2b2d31", height=32,
-                command=lambda item=law: self.display_law(item)
+    def _update_header_faction_icon(self):
+        icon = faction_icon(self.current_faction["id"], T.ICON_LG)
+        if icon:
+            self._keep_icon(icon)
+            self.header_faction_icon.configure(image=icon)
+        else:
+            self.header_faction_icon.configure(image=None)
+        self.faction_title.configure(text=self.current_faction["name"])
+
+    def _update_compact_faction_icon(self):
+        icon = faction_icon(self.current_faction["id"], T.ICON_MD)
+        if icon:
+            self._keep_icon(icon)
+            self.compact_faction_icon.configure(image=icon)
+        else:
+            self.compact_faction_icon.configure(image=None)
+
+    def _bind_resize(self):
+        def on_root_configure(event):
+            if event.widget is self.root:
+                self._adaptive.schedule()
+
+        self.root.bind("<Configure>", on_root_configure, add="+")
+
+    def _schedule_update_checks(self):
+        cfg = app_config.get("updates", {}) or {}
+        if not cfg.get("auto_check", True):
+            return
+        hours = max(1, int(cfg.get("check_interval_hours", 24)))
+        interval_ms = hours * 3600 * 1000
+        self.root.after(interval_ms, self._periodic_update_check)
+
+    def _periodic_update_check(self):
+        self._run_update_check(force=False)
+        self._schedule_update_checks()
+
+    def _run_update_check(self, force: bool = False):
+        def worker():
+            from core.updates import check_for_updates, get_update_status_text
+
+            info = check_for_updates(force=force)
+
+            def on_ui():
+                if info and info.available:
+                    self._show_update_notification(info)
+                elif force:
+                    msg = get_update_status_text(info)
+                    self.page_settings.set_update_status(msg, ok=not (info and info.available))
+                    show_toast(self.root, msg, accent=self.accent)
+                elif info:
+                    self.page_settings.set_update_status(get_update_status_text(info))
+
+            self.root.after(0, on_ui)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_update_notification(self, info):
+        self._pending_update = info
+        self.update_badge.configure(text="● Обновление")
+        self.update_badge.pack(side="left", padx=(8, 0))
+        self.page_settings.set_update_status(
+            f"Доступно обновление {info.latest} (у вас {info.current})", ok=False,
+        )
+        show_toast(self.root, f"Доступна версия {info.latest}", accent=T.WARNING)
+        if self._badge_pulse:
+            self._badge_pulse.start()
+
+        cfg = app_config.get("updates", {}) or {}
+        if cfg.get("auto_download", True) and info.download_url:
+            self._auto_download_update(info)
+        else:
+            show_update_dialog(self.root, info, on_dismiss=self._clear_update_badge, accent=self.accent)
+
+    def _auto_download_update(self, info):
+        def worker():
+            from core.update_installer import UpdateInstallError, cached_update_path, download_update
+
+            existing = cached_update_path(info)
+            if existing:
+                self.root.after(0, lambda: self._open_update_dialog(info, existing))
+                return
+            try:
+                path = download_update(info)
+                self.root.after(0, lambda: self._open_update_dialog(info, path))
+            except UpdateInstallError:
+                self.root.after(0, lambda: show_update_dialog(
+                    self.root, info, on_dismiss=self._clear_update_badge, accent=self.accent,
+                ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _open_update_dialog(self, info, package_path):
+        show_toast(self.root, "Обновление загружено — установите одним кликом", accent=T.SUCCESS)
+        show_update_dialog(
+            self.root, info, package_path=package_path,
+            on_dismiss=self._clear_update_badge, accent=self.accent,
+        )
+
+    def _clear_update_badge(self):
+        self._pending_update = None
+        if self._badge_pulse:
+            self._badge_pulse.stop()
+        self.update_badge.pack_forget()
+
+    def _bind_keyboard_shortcuts(self):
+        def focus_search(e):
+            if self.current_page == "database":
+                self.search_entry.focus_set()
+            elif self.current_page == "measures":
+                self.page_measures.search.focus_set()
+
+        self.root.bind("<Control-f>", focus_search)
+        self.root.bind("<Escape>", lambda e: self._clear_search())
+        self.root.bind("<Up>", lambda e: self._navigate_list(-1))
+        self.root.bind("<Down>", lambda e: self._navigate_list(1))
+
+    def _navigate_list(self, delta: int):
+        if self.current_page == "measures":
+            self.page_measures.navigate_list(delta)
+            return
+        if self.current_page != "database" or not self.filtered_items:
+            return
+        self._list_index = max(0, min(len(self.filtered_items) - 1, self._list_index + delta))
+        item = self.filtered_items[self._list_index]
+        self._show_item(item, self._item_key(item))
+
+    def toggle_hidden(self):
+        """Полное скрытие окна (не compact)."""
+        if self.is_hidden:
+            self.root.deiconify()
+            self.root.attributes("-topmost", True)
+            self.is_hidden = False
+            show_toast(self.root, "HelpeRP снова на экране", accent=self.accent)
+        else:
+            self.root.withdraw()
+            self.is_hidden = True
+
+    def _open_settings(self):
+        if not self.is_expanded:
+            self._set_mode(True)
+        self._switch_page("settings")
+
+    def _preview_theme(self):
+        vals = self.page_settings.theme_picker.get_values()
+        ui = dict(app_config.get("ui", {}) or {})
+        ui.update(vals)
+        app_config.settings["ui"] = ui
+        from gui.theme_engine import load_theme_from_config
+        load_theme_from_config()
+        self.apply_visual_theme()
+
+    def apply_visual_theme(self):
+        from gui.theme_engine import effective_accent
+
+        self.accent, self._accent_hover = effective_accent(self.current_faction["accent"])
+
+        self.root.configure(fg_color=T.BG_ROOT)
+        self.compact_frame.configure(fg_color=T.BG_SIDEBAR, border_color=T.BORDER)
+        self.expanded_frame.configure(fg_color=T.BG_ROOT)
+        self.sidebar.configure(fg_color=T.BG_SIDEBAR)
+        self.main.configure(fg_color=T.BG_ROOT)
+
+        self.compact_search.configure(fg_color=T.BG_INPUT, border_color=T.BORDER)
+        self.compact_preview.configure(text_color=T.TEXT_MUTED)
+        self.compact_stats.configure(text_color=T.TEXT_MUTED)
+        self._sidebar_footer.configure(fg_color=T.BG_CARD)
+        self.character_box.configure(fg_color=T.BG_INPUT, border_color=T.BORDER)
+
+        self.search_entry.configure(fg_color=T.BG_INPUT, border_color=T.BORDER)
+        self.category_box.configure(fg_color=T.BG_INPUT, border_color=T.BORDER)
+        self._db_list_panel.configure(fg_color=T.BG_PANEL, border_color=T.BORDER)
+        self._db_detail_panel.configure(fg_color=T.BG_PANEL, border_color=T.BORDER)
+        self.textbox.configure(fg_color=T.BG_CARD, border_color=T.BORDER, text_color=T.TEXT_PRIMARY)
+        self.detail_meta.configure(text_color=T.TEXT_MUTED)
+        self.stats_label.configure(text_color=T.TEXT_SECONDARY)
+        self.faction_sub.configure(text_color=T.TEXT_MUTED)
+        self.faction_title.configure(text_color=T.TEXT_PRIMARY)
+        self.status_bar.configure(text_color=T.TEXT_MUTED)
+
+        for name, btn in self.nav_buttons.items():
+            selected = name == self.current_page
+            btn.configure(
+                fg_color=T.BG_SELECTED if selected else T.BG_CARD,
+                hover_color=T.BG_HOVER,
+                border_color=self.accent if selected else T.BORDER,
             )
-            btn.pack(fill="x", pady=2, padx=5)
 
-    def display_law(self, law):
-        """Отображение текста элемента на экране"""
-        self.current_selected_law = law
-        self.law_title_label.configure(
-            text=law['title'], text_color="#00f0ff"
+        for name, btn in self.faction_buttons.items():
+            fac = get_faction(name)
+            selected = name == self.current_faction["name"]
+            btn.configure(
+                fg_color=T.BG_SELECTED if selected else T.BG_CARD,
+                hover_color=T.BG_HOVER,
+                border_color=fac["accent"] if selected else T.BORDER,
+            )
+
+        self.page_measures.apply_theme(self.accent)
+        self.page_templates.apply_theme(self.accent)
+        self.page_settings.apply_theme(self.accent)
+        self._apply_accent()
+        self._refresh_list()
+        self._refresh_recent_sidebar()
+
+    def _on_settings_saved(self):
+        hk = app_config.get("hotkeys", {})
+        self.hotkey_label.configure(text=f"{hk.get('toggle_overlay', 'shift+\\\\').upper()} — режим")
+        self.hide_hotkey_label.configure(
+            text=f"{hk.get('hide_window', 'ctrl+shift+h').upper()} — скрыть окно"
         )
-        
-        self.textbox.configure(state="normal")
-        self.textbox.delete("0.0", "end")
-        
-        desc = law.get('description', law.get('protocol', law.get('text', '')))
-        self.textbox.insert("0.0", desc)
-        self.textbox.configure(state="disabled")
+        ui_cfg = app_config.get("ui", {})
+        self.list_limit = int(ui_cfg.get("list_limit", 120))
+        self.page_measures.set_list_limit(self.list_limit)
+        self._refresh_character_box()
+        from gui.theme_engine import load_theme_from_config
+        load_theme_from_config()
+        self.apply_visual_theme()
+        from core.ai_client import rp_ai
+        rp_ai.update_client()
 
-    def change_faction(self, selected_faction):
-        app_config.set("current_faction", selected_faction)
-        self.load_laws_database()
-        self.populate_list(self.all_laws)
+    def _clear_search(self):
+        self.search_entry.delete(0, "end")
+        self._on_filter()
 
-    def filter_laws(self, event=None):
-        """Фильтр локальной базы + живой интернет-поиск"""
-        query = self.search_entry.get().lower().strip()
-        if not query:
-            self.populate_list(self.all_laws)
+    def _set_mode(self, expanded: bool):
+        if expanded == self.is_expanded:
             return
 
-        filtered = [
-            l for l in self.all_laws 
-            if query in str(l.get('article', '')).lower() 
-            or query in l['title'].lower() 
-            or any(query in kw for kw in l.get('keywords', []))
-        ]
-        self.populate_list(filtered)
+        if animations_enabled():
+            target = T.EXPANDED_SIZE if expanded else T.COMPACT_SIZE
 
-        if len(filtered) == 0 and len(query) > 3:
-            self.law_title_label.configure(
-                text="🌐 Ищу в интернете...", text_color="#ff9900"
-            )
-            
-            def bg_search():
-                try:
-                    from core.online_search import search_law_online
-                    fac = self.faction_selector.get()
-                    txt = search_law_online(query, faction_context=fac)
-                    if txt:
-                        self.root.after(
-                            0, lambda: self.update_ui_with_online_data(query, txt)
-                        )
+            def mid():
+                if expanded:
+                    self.compact_frame.pack_forget()
+                    self.expanded_frame.pack(fill="both", expand=True)
+                    q = self.compact_search.get().strip()
+                    if q:
+                        self.search_entry.delete(0, "end")
+                        self.search_entry.insert(0, q)
+                        self._on_filter()
+                else:
+                    self.saved_geometry = self.root.geometry()
+                    q = self.search_entry.get().strip()
+                    self.compact_search.delete(0, "end")
+                    if q:
+                        self.compact_search.insert(0, q)
+                    self.expanded_frame.pack_forget()
+                    self.compact_frame.pack(fill="x", padx=8, pady=8)
+
+            def done():
+                self.is_expanded = expanded
+                if expanded:
+                    if self.saved_geometry:
+                        self.root.geometry(self.saved_geometry)
                     else:
-                        self.root.after(
-                            0, lambda: self.law_title_label.configure(
-                                text="❌ Не найдено", text_color="red"
-                            )
-                        )
-                except Exception as e:
-                    print(f"Ошибка поиска: {e}")
-            
-            threading.Thread(target=bg_search, daemon=True).start()
+                        self._center_geometry(*T.EXPANDED_SIZE)
+                    self.root.minsize(960, 600)
+                else:
+                    self.root.minsize(T.COMPACT_SIZE[0], T.COMPACT_SIZE[1])
+                    self._update_compact_bar()
+                if animations_enabled():
+                    Animator.flash_bar(self.accent_bar, self.root, self.accent)
 
-    def update_ui_with_online_data(self, query, text):
-        self.law_title_label.configure(
-            text=f"🌐 Из сети: {query}", text_color="#00f0ff"
-        )
+            Animator.animate_geometry(self.root, target[0], target[1], on_mid=mid, on_done=done)
+            return
+
+        self._apply_mode(expanded)
+
+    def _apply_mode(self, expanded: bool):
+        if expanded:
+            self.compact_frame.pack_forget()
+            self.expanded_frame.pack(fill="both", expand=True)
+            q = self.compact_search.get().strip()
+            if q:
+                self.search_entry.delete(0, "end")
+                self.search_entry.insert(0, q)
+                self._on_filter()
+            if self.saved_geometry:
+                self.root.geometry(self.saved_geometry)
+            else:
+                self._center_geometry(*T.EXPANDED_SIZE)
+            self.root.minsize(960, 600)
+        else:
+            self.saved_geometry = self.root.geometry()
+            q = self.search_entry.get().strip()
+            self.compact_search.delete(0, "end")
+            if q:
+                self.compact_search.insert(0, q)
+            self.expanded_frame.pack_forget()
+            self.compact_frame.pack(fill="x", padx=8, pady=8)
+            self._center_geometry(*T.COMPACT_SIZE)
+            self.root.minsize(T.COMPACT_SIZE[0], T.COMPACT_SIZE[1])
+            self._update_compact_bar()
+
+        self.is_expanded = expanded
+
+    def _update_compact_bar(self):
+        total = len(self.all_items)
+        self.compact_stats.configure(text=f"{total} зап.")
+        self._update_compact_faction_icon()
+        if self.current_item:
+            t = self.current_item.get("title", "")
+            self.compact_preview.configure(text=t[:55] + ("…" if len(t) > 55 else ""))
+        elif self.filtered_items:
+            self.compact_preview.configure(
+                text=(
+                    f"Найдено: {len(self.filtered_items)} · "
+                    f"{self.filtered_items[0].get('title', '')[:30]}…"
+                )
+            )
+        else:
+            self.compact_preview.configure(
+                text=self.current_faction.get("subtitle", "")
+            )
+
+    def _on_compact_search(self, event=None):
+        q = self.compact_search.get().strip()
+        if not q:
+            self.filtered_items = list(self.all_items)
+        else:
+            self.filtered_items = filter_and_rank(self.all_items, q)
+        self._list_index = 0
+        if self.filtered_items:
+            self.current_item = self.filtered_items[0]
+        self._update_compact_bar()
+
+    def _apply_accent(self):
+        from gui.theme_engine import effective_accent
+
+        self.accent, hover = effective_accent(self.current_faction["accent"])
+        self._accent_hover = hover
+        self.accent_bar.configure(fg_color=self.accent)
+        self.compact_accent.configure(fg_color=self.accent)
+        self.frequent_only.configure(fg_color=self.accent, hover_color=hover)
+        self.btn_ai.configure(fg_color=self.accent, hover_color=hover)
+        self.btn_expand.configure(fg_color=self.accent, hover_color=hover)
+        self.detail_title.configure(text_color=self.accent)
+        self.page_measures.set_accent(self.accent)
+        self.page_templates.set_accent(self.accent)
+        self.page_settings.set_accent(self.accent)
+        for name, btn in self.nav_buttons.items():
+            if name == self.current_page:
+                btn.configure(border_color=self.accent)
+
+    def _select_faction(self, faction):
+        if self.current_page != "database":
+            self._switch_page("database")
+
+        app_config.set("current_faction", faction["name"])
+        self.current_faction = faction
+        self.search_entry.delete(0, "end")
+        self.compact_search.delete(0, "end")
+        self.category_box.set("Все категории")
+        self.frequent_only.deselect()
+
+        for name, btn in self.faction_buttons.items():
+            fac = get_faction(name)
+            selected = name == faction["name"]
+            btn.configure(
+                fg_color=T.BG_SELECTED if selected else T.BG_CARD,
+                border_width=2 if selected else 0,
+                border_color=fac["accent"] if selected else T.BORDER,
+            )
+
+        self._load_data()
+        self._update_categories()
+        self._apply_accent()
+        self._update_header_faction_icon()
+        if animations_enabled():
+            Animator.flash_bar(self.accent_bar, self.root, self.accent)
+        self.faction_sub.configure(text=faction.get("subtitle", ""))
+        self.stats_label.configure(text=self._stats_text())
+        self._clear_detail()
+        self._refresh_list()
+        self._update_compact_bar()
+
+    def _update_categories(self):
+        cats = sorted({i.get("category") for i in self.all_items if i.get("category")})
+        self.category_box.configure(values=["Все категории"] + cats)
+        self.category_box.set("Все категории")
+
+    def _item_search_blob(self, item):
+        return item_blob(item)
+
+    def _stats_text(self):
+        total = len(self.all_items)
+        freq = sum(1 for x in self.all_items if x.get("is_frequent"))
+        shown = len(self.filtered_items)
+        label = self.current_faction.get("entry_label", "записей")
+        if shown != total:
+            return f"{shown} / {total} {label}  ·  {freq} частых"
+        return f"{total} {label}  ·  {freq} частых"
+
+    def _item_key(self, item):
+        return item.get("id") or item.get("article") or item.get("title")
+
+    def _push_recent(self, item):
+        key = self._item_key(item)
+        title = item.get("title", "")
+        recent = [r for r in app_config.get("recent", []) if r.get("key") != key]
+        recent.insert(0, {"key": key, "title": title, "faction": self.current_faction["name"]})
+        app_config.set("recent", recent[:12])
+        self._refresh_recent_sidebar()
+
+    def _on_filter(self, event=None):
+        query = self.search_entry.get().strip()
+        cat = self.category_box.get()
+        pool = self.all_items
+        self.list_show_all = False
+
+        if self.frequent_only.get():
+            pool = [x for x in pool if x.get("is_frequent")]
+        if cat and cat != "Все категории":
+            pool = [x for x in pool if x.get("category") == cat]
+        if query:
+            pool = filter_and_rank(pool, query)
+
+        self.filtered_items = pool
+        self._list_index = 0
+        self._refresh_list()
+        self.stats_label.configure(text=self._stats_text())
+        self._update_compact_bar()
+
+        if query and len(pool) == 0 and len(query) > 3:
+            if app_config.get("search", {}).get("online_fallback", True):
+                self._online_search(query)
+
+    def _refresh_list(self):
+        for w in self.scroll_list.winfo_children():
+            w.destroy()
+        self.list_buttons.clear()
+
+        if not self.filtered_items:
+            empty = ctk.CTkFrame(self.scroll_list, fg_color="transparent")
+            empty.pack(fill="x", pady=40)
+
+            warn_icon = ui_icon("warning", T.ICON_LG)
+            if warn_icon:
+                self._keep_icon(warn_icon)
+                ctk.CTkLabel(empty, text="", image=warn_icon).pack(pady=(0, 8))
+
+            ctk.CTkLabel(
+                empty,
+                text="Ничего не найдено",
+                font=T.FONT_BODY,
+                text_color=T.TEXT_MUTED,
+            ).pack()
+            ctk.CTkLabel(
+                empty,
+                text="Измените фильтры или попробуйте другой запрос",
+                font=T.FONT_TINY,
+                text_color=T.TEXT_MUTED,
+            ).pack(pady=(4, 0))
+            return
+
+        verified = ui_icon("frequent", T.ICON_SM)
+        if verified:
+            self._keep_icon(verified)
+
+        display = self.filtered_items
+        if not self.list_show_all and len(display) > self.list_limit:
+            display = display[: self.list_limit]
+
+        for idx, item in enumerate(display):
+            key = self._item_key(item)
+            title = item.get("title", "—")
+            short = title if len(title) <= 48 else title[:45] + "…"
+            cat = item.get("category", "")
+            sub = f"\n{cat}" if cat and cat != "Словарь терминов" else ""
+            is_freq = item.get("is_frequent")
+            btn_image = verified if is_freq else None
+
+            btn = ctk.CTkButton(
+                self.scroll_list,
+                text=f"{short}{sub}",
+                image=btn_image,
+                compound="left" if btn_image else "center",
+                anchor="w",
+                height=44 if sub else 38,
+                font=T.FONT_SMALL,
+                fg_color=T.BG_CARD,
+                hover_color=T.BG_HOVER,
+                text_color=T.TEXT_PRIMARY,
+                corner_radius=T.RADIUS_SM,
+                command=lambda i=item, k=key: self._show_item(i, k),
+            )
+            btn.pack(fill="x", pady=2)
+            self.list_buttons[key] = btn
+
+        if not self.list_show_all and len(self.filtered_items) > self.list_limit:
+            rest = len(self.filtered_items) - self.list_limit
+            ctk.CTkButton(
+                self.scroll_list,
+                text=f"Показать ещё {rest}…",
+                height=36,
+                font=T.FONT_TINY,
+                fg_color=T.BG_HOVER,
+                hover_color=T.BORDER,
+                command=self._show_all_list,
+            ).pack(fill="x", pady=6)
+
+        if self.filtered_items:
+            idx = min(self._list_index, len(self.filtered_items) - 1)
+            item = self.filtered_items[idx]
+            self._show_item(item, self._item_key(item))
+
+        Animator.stagger_buttons(self.root, list(self.list_buttons.values()))
+
+    def _show_all_list(self):
+        self.list_show_all = True
+        self._refresh_list()
+
+    def _highlight_selection(self, key):
+        for k, btn in self.list_buttons.items():
+            if k == key:
+                Animator.highlight_button(btn, self.root, self.accent)
+            else:
+                btn.configure(fg_color=T.BG_CARD, border_width=0)
+
+    def _build_detail_body(self, item):
+        lines = []
+        body = item.get("description") or item.get("protocol") or item.get("text", "")
+        if body:
+            lines.append(body)
+        if item.get("punishment"):
+            lines.append(f"\n\n▸ Наказание / меры\n{item['punishment']}")
+        if item.get("chapter"):
+            lines.append(f"\n\n▸ {item['chapter']}")
+        if item.get("source_faction"):
+            lines.append(f"\n\n▸ Фракция: {item['source_faction']}")
+        if item.get("usable_by"):
+            lines.append(f"\n\n▸ Применяют: {', '.join(item['usable_by'])}")
+        if item.get("keywords"):
+            lines.append(
+                f"\n\n▸ Ключевые слова: {', '.join(item['keywords'][:14])}"
+            )
+        return "".join(lines)
+
+    def _show_item(self, item, key):
+        self.current_item = item
+        self.selected_list_key = key
+        self._list_index = self.filtered_items.index(item) if item in self.filtered_items else 0
+        self._push_recent(item)
+        self._highlight_selection(key)
+
+        self.detail_title.configure(text=item.get("title", "—"))
+        meta = []
+        if item.get("category"):
+            meta.append(item["category"])
+        if item.get("article"):
+            meta.append(f"№{item['article']}")
+        if item.get("source_faction"):
+            meta.append(item["source_faction"])
+        if item.get("is_frequent"):
+            meta.append("Частая")
+        self.detail_meta.configure(text="  ·  ".join(meta))
+        self._adaptive.schedule()
+
+        self.textbox.configure(state="normal")
+        self.textbox.delete("0.0", "end")
+        self.textbox.insert("0.0", self._build_detail_body(item))
+        self.textbox.configure(state="disabled")
+        self._update_compact_bar()
+
+        if animations_enabled():
+            Animator.color_pulse(
+                self.textbox, self.root, T.BORDER, self.accent, duration=220, cycles=1,
+            )
+
+    def _clear_detail(self):
+        self.current_item = None
+        self.selected_list_key = None
+        self.detail_title.configure(text="Выберите запись")
+        self.detail_meta.configure(text="")
+        self.textbox.configure(state="normal")
+        self.textbox.delete("0.0", "end")
+        self.textbox.configure(state="disabled")
+
+    def _online_search(self, query):
+        if self._detail_loader:
+            self._detail_loader.start("Поиск в интернете")
+        else:
+            self.detail_title.configure(text="Поиск в интернете…")
+        self.detail_meta.configure(text="Wikipedia · DuckDuckGo")
+
+        def worker():
+            try:
+                from core.online_search import search_law_online
+
+                txt = search_law_online(query, self.current_faction["name"])
+
+                def finish():
+                    if self._detail_loader:
+                        self._detail_loader.stop()
+                    if txt:
+                        self._show_online(query, txt)
+                    else:
+                        self.detail_title.configure(text="Не найдено")
+                        self.detail_meta.configure(text="")
+
+                self.root.after(0, finish)
+            except Exception as e:
+                print(f"Ошибка поиска: {e}")
+                if self._detail_loader:
+                    self.root.after(0, lambda: self._detail_loader.stop("Ошибка поиска"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_online(self, query, text):
+        self.current_item = {"title": query, "description": text}
+        self.detail_title.configure(text=f"Из сети: {query}")
+        self.detail_meta.configure(text="Онлайн-поиск")
         self.textbox.configure(state="normal")
         self.textbox.delete("0.0", "end")
         self.textbox.insert("0.0", text)
         self.textbox.configure(state="disabled")
-        self.current_selected_law = {"title": query, "description": text}
+        self._update_compact_bar()
 
     def copy_law_text(self):
+        text = self.textbox.get("0.0", "end").strip()
+        if not text:
+            return
         self.root.clipboard_clear()
-        self.root.clipboard_append(self.textbox.get("0.0", "end").strip())
+        self.root.clipboard_append(text)
+        show_toast(self.root, "Скопировано в буфер обмена", accent=self.accent)
 
     def trigger_ai_action(self):
-        """Генерация RP-строк на основе текста на экране"""
-        current_text = self.textbox.get("0.0", "end").strip()
-        self.law_title_label.configure(
-            text="⏳ ИИ формирует отыгровку...", text_color="#ff9900"
-        )
-        self.root.update()
-        
-        def bg_ai():
+        text = self.textbox.get("0.0", "end").strip()
+        if not text:
+            return
+        if not effective_api_key(
+            app_config.get("api_key", ""),
+            app_config.get("base_url", ""),
+            app_config.get("ai_provider", ""),
+        ):
+            show_toast(self.root, "Настройте API в разделе Настройки → ИИ", accent=T.ERROR)
+            self._switch_page("settings")
+            return
+
+        if self._detail_loader:
+            self._detail_loader.start("ИИ формирует отыгровку")
+        else:
+            self.detail_title.configure(text="ИИ формирует отыгровку…")
+        from core.characters import get_active_character_dict
+        char = get_active_character_dict()
+
+        def worker():
             try:
-                from core.ai_client import rp_ai
-                from core.hotkeys import send_rp_sequence
-                lines = rp_ai.generate_rp_commands(
-                    f"Сделай отыгровку по тексту:\n{current_text}"
+                from core.ai_client import AIClientError, rp_ai
+
+                prompt = (
+                    f"Фракция: {self.current_faction['name']}\n"
+                    f"Персонаж: {char.get('name', '')}, "
+                    f"{char.get('rank', '')}, {char.get('badge', '')}\n"
+                    f"Характер: {char.get('personality', '')}\n"
+                    f"Сделай отыгровку по тексту:\n{text}"
                 )
-                self.root.after(
-                    0, lambda: self.law_title_label.configure(
-                        text="✅ Готово!", text_color="#2ecc71"
-                    )
-                )
-                send_rp_sequence(lines)
+                lines = rp_ai.generate_rp_commands(prompt)
+                title = self.current_item.get("title", "Готово") if self.current_item else "Готово"
+
+                def on_ui():
+                    if self._detail_loader:
+                        self._detail_loader.stop(title)
+                    else:
+                        self.detail_title.configure(text=title)
+                    if app_config.get("ui", {}).get("auto_send_ai"):
+                        from core.hotkeys import send_rp_sequence
+                        send_rp_sequence(lines)
+                        show_toast(self.root, "Отыгровка отправлена в чат", accent=self.accent)
+                    else:
+                        AIPreviewDialog(self.root, lines, on_send=lambda ls: self._send_ai_lines(ls))
+
+                self.root.after(0, on_ui)
             except Exception as e:
-                print(f"Ошибка ИИ: {e}")
-                
-        threading.Thread(target=bg_ai, daemon=True).start()
+                msg = str(e)[:120]
+
+                def on_err():
+                    if self._detail_loader:
+                        self._detail_loader.stop("Ошибка ИИ")
+                    else:
+                        self.detail_title.configure(text="Ошибка ИИ")
+                    show_toast(self.root, msg, accent=T.ERROR)
+
+                self.root.after(0, on_err)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _send_ai_lines(self, lines):
+        from core.hotkeys import send_rp_sequence
+        send_rp_sequence(lines)
+        show_toast(self.root, "Отыгровка отправлена в чат", accent=self.accent)
 
     def toggle_visibility(self):
-        if self.is_visible:
-            self.root.withdraw()
-            self.is_visible = False
-        else:
-            self.root.deiconify()
-            self.is_visible = True
+        """Shift+\\ — компактный ↔ развёрнутый режим."""
+        if self.is_hidden:
+            self.toggle_hidden()
+        self._set_mode(not self.is_expanded)
 
     def start(self):
         self.root.mainloop()

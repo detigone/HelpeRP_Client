@@ -1,16 +1,58 @@
 {
-    "api_key": "YOUR_AI_API_KEY",
-    "base_url": "https://openai.com",
+    "api_key": "",
+    "base_url": "https://api.openai.com/v1",
     "model": "gpt-4o-mini",
-    "current_faction": "Законодательство РФ",
+    "ai_provider": "openai",
+    "current_faction": "Все базы",
     "character": {
         "name": "Иван Иванов",
         "rank": "Рядовой",
         "badge": "№0000",
         "personality": "Вежливый, строго следует уставу, говорит уверенно"
     },
+    "characters": [
+        {
+            "id": "char_d1bf77c4",
+            "label": "Основной",
+            "name": "Иван Иванов",
+            "rank": "Рядовой",
+            "badge": "№0000",
+            "personality": "Вежливый, строго следует уставу, говорит уверенно"
+        }
+    ],
+    "active_character_id": "char_d1bf77c4",
+    "game": {
+        "chat_key": "t"
+    },
+    "ui": {
+        "list_limit": 120,
+        "auto_send_ai": false,
+        "animations": true,
+        "theme": "helperp",
+        "use_faction_accent": true,
+        "custom_accent": ""
+    },
+    "recent": [],
     "hotkeys": {
         "toggle_overlay": "shift+\\",
+        "hide_window": "ctrl+shift+h",
         "submit_request": "enter"
+    },
+    "license": {
+        "eula_accepted": false,
+        "eula_version": "1.1"
+    },
+    "updates": {
+        "auto_check": true,
+        "auto_download": true,
+        "check_interval_hours": 24,
+        "last_check": null,
+        "dismissed_version": "",
+        "manifest_url": ""
+    },
+    "search": {
+        "wikipedia": true,
+        "online_fallback": true,
+        "rag": true
     }
 }

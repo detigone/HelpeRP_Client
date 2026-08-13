@@ -1,0 +1,11 @@
+{
+    "version": "1.1.0",
+    "released": "2026-08-13",
+    "title": "HelpeRP 1.1.0",
+    "required": false,
+    "min_app_version": "1.0.0",
+    "download_url": "https://example.com/helperp/releases/HelpeRP_1.1.0.zip",
+    "sha256": "8e07288a775381528741da3b7187dbe53d030d280ae728a7cefd25abf07c2b2c",
+    "file_size": 44693304,
+    "changelog": "HelpeRP 1.1.0\n\n• Автоматическая сборка релиза\n• Автообновление и установка в один клик\n• manifest.json с контрольной суммой sha256"
+}

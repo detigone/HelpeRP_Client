@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HelpeRP — база знаний для RP</title>
+  <meta name="description" content="HelpeRP — бесплатный оверлей для GTA RP: база знаний, меры, шаблоны, умный поиск">
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify/themes/vue.css">
+  <style>
+    :root {
+      --accent: #7c3aed;
+      --accent2: #a78bfa;
+      --bg: #08090c;
+      --card: #13161c;
+    }
+    body { background: var(--bg); }
+    #landing {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: #f3f4f6;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 48px 24px 24px;
+    }
+    #landing h1 { font-size: 2.4rem; margin: 0 0 8px; }
+    #landing .tag { color: var(--accent2); font-size: 1.1rem; margin-bottom: 24px; }
+    #landing p.lead { color: #a1a8b5; line-height: 1.6; max-width: 640px; }
+    .hero { display: flex; gap: 32px; align-items: center; flex-wrap: wrap; margin-bottom: 40px; }
+    .hero img { width: 120px; height: 120px; border-radius: 24px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 32px 0; }
+    .card {
+      background: var(--card); border: 1px solid #2a3140; border-radius: 12px;
+      padding: 20px;
+    }
+    .card h3 { margin: 0 0 8px; color: var(--accent2); font-size: 1rem; }
+    .card p { margin: 0; color: #a1a8b5; font-size: 0.9rem; line-height: 1.5; }
+    .btns { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+    .btn {
+      display: inline-block; padding: 12px 24px; border-radius: 10px;
+      text-decoration: none; font-weight: 600; font-size: 0.95rem;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-secondary { background: #262c38; color: #f3f4f6; border: 1px solid #3a4354; }
+    .free-badge {
+      display: inline-block; background: #22c55e22; color: #22c55e;
+      padding: 4px 12px; border-radius: 999px; font-size: 0.85rem; margin-bottom: 16px;
+    }
+    #app { display: none; border-top: 1px solid #2a3140; margin-top: 40px; }
+    body.docs-mode #landing { display: none; }
+    body.docs-mode #app { display: block; }
+    .sidebar { background: #0e1014 !important; }
+    .markdown-section { max-width: 860px; }
+  </style>
+</head>
+<body>
+  <div id="landing">
+    <div class="hero">
+      <img src="assets/logo.png" alt="HelpeRP">
+      <div>
+        <span class="free-badge">Бесплатно · v1.1.0</span>
+        <h1>HelpeRP</h1>
+        <div class="tag">База знаний и оверлей для RP-игроков</div>
+        <p class="lead">
+          Умный поиск по законам и регламентам, справочник мер, готовые шаблоны /me и /do,
+          профили персонажей и ИИ-отыгровки. Работает поверх игры на Windows.
+        </p>
+        <div class="btns">
+          <a class="btn btn-primary" id="download" href="https://github.com/yeolka-lm/HelpeRP_Client/releases/latest">Скачать exe</a>
+          <a class="btn btn-secondary" href="#/docs/index">Документация</a>
+          <a class="btn btn-secondary" href="https://github.com/yeolka-lm/HelpeRP_Client">GitHub</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="cards">
+      <div class="card"><h3>📚 База знаний</h3><p>550+ записей: МВД, СК, МЧС, СМП, законы, энциклопедия</p></div>
+      <div class="card"><h3>⚖ Меры</h3><p>Что грозит за нарушение — УК, КоАП, уровни розыска</p></div>
+      <div class="card"><h3>⚡ Шаблоны</h3><p>Готовые отыгровки без API и без ИИ — одним кликом в чат</p></div>
+      <div class="card"><h3>🔍 RAG-поиск</h3><p>Умный поиск BM25 — находит по смыслу, не только по словам</p></div>
+      <div class="card"><h3>👤 Профили</h3><p>Несколько персонажей — переключение в сайдбаре</p></div>
+      <div class="card"><h3>🔄 Обновления</h3><p>Автоматическая проверка и установка новых версий</p></div>
+    </div>
+
+    <p style="color:#6b7280;font-size:0.85rem;">© 2026 detigone · HelpeRP бесплатен. Покупки и Premium — позже.</p>
+  </div>
+
+  <div id="app"></div>
+
+  <script>
+    if (location.hash.startsWith("#/")) {
+      document.body.classList.add("docs-mode");
+    }
+    window.addEventListener("hashchange", function() {
+      document.body.classList.toggle("docs-mode", location.hash.startsWith("#/"));
+    });
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify/lib/docsify.min.js"></script>
+  <script>
+    window.$docsify = {
+      name: "HelpeRP Docs",
+      repo: "yeolka-lm/HelpeRP_Client",
+      basePath: "docs/",
+      loadSidebar: true,
+      subMaxLevel: 3,
+      auto2top: true,
+      themeColor: "#7c3aed",
+      search: "auto",
+      alias: { "/.*/_sidebar.md": "/_sidebar.md" },
+      plugins: [
+        function(hook) {
+          hook.doneEach(function() {
+            if (location.hash.startsWith("#/")) {
+              document.body.classList.add("docs-mode");
+            }
+          });
+        }
+      ]
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify/lib/plugins/search.min.js"></script>
+</body>
+</html>

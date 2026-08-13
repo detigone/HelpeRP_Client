@@ -1,0 +1,32 @@
+HelpeRP — End User License Agreement (EULA)
+Version 1.0 · 2026
+
+READ CAREFULLY BEFORE USING THE SOFTWARE.
+
+This agreement is between you ("User") and detigone ("Licensor") regarding
+HelpeRP software and related materials ("Software").
+
+1. LICENSE GRANT
+   Licensor grants a non-exclusive, non-transferable license to install and
+   use one copy on one computer with a valid license key.
+
+2. RESTRICTIONS
+   Without written consent you may not: copy, redistribute, rent, resell,
+   publish source code, reverse engineer for competing products, share keys,
+   or remove copyright notices.
+
+3. CONTENT
+   The knowledge base is for role-play reference only, not legal advice.
+
+4. AI FEATURES
+   Require User's own third-party API key. API costs are borne by User.
+
+5. WARRANTY DISCLAIMER
+   Software is provided "AS IS".
+
+6. LIABILITY
+   Limited to the license fee paid.
+
+Acceptance by activating a license key.
+
+© 2026 detigone. All rights reserved.

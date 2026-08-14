@@ -176,13 +176,60 @@ class TemplatesPanel(ctk.CTkFrame):
         self.meta_label.configure(
             text=f"{template.get('faction', '')} · {template.get('category', '')}  ·  {tags}",
         )
+        
+        # Build enhanced template display with all v2.0+ fields
+        display_text = self._format_template_display(template)
+        
         self.body.configure(state="normal")
         self.body.delete("0.0", "end")
-        self.body.insert("0.0", template_to_text(template))
+        self.body.insert("0.0", display_text)
         self.body.configure(state="disabled")
 
         if animations_enabled():
             Animator.color_pulse(self.body, self.winfo_toplevel(), T.BORDER, self.accent, duration=180, cycles=1)
+    
+    def _format_template_display(self, template: dict) -> str:
+        """Format template for display with all v2.0+ fields."""
+        parts = []
+        
+        # Main lines section
+        lines = template.get("lines") or []
+        if lines:
+            parts.append("═══ ОСНОВНЫЕ КОМАНДЫ ═══")
+            parts.append("\n".join(lines))
+        
+        # Variations section
+        variations = template.get("variations") or []
+        if variations:
+            parts.append("\n")
+            parts.append("═══ ВАРИАЦИИ ═══")
+            for var in variations:
+                condition = var.get("condition", "")
+                var_lines = var.get("lines", [])
+                if condition:
+                    parts.append(f"\n▶ {condition}:")
+                if var_lines:
+                    parts.append("\n  " + "\n  ".join(var_lines))
+        
+        # Outcomes section
+        success = template.get("success_outcome", "")
+        fail = template.get("fail_outcome", "")
+        if success or fail:
+            parts.append("\n")
+            parts.append("═══ ИСХОДЫ ═══")
+            if success:
+                parts.append(f"✓ Успех:\n  {success}")
+            if fail:
+                parts.append(f"✗ Неудача:\n  {fail}")
+        
+        # Advice section
+        advice = template.get("advice", "")
+        if advice:
+            parts.append("\n")
+            parts.append("═══ РЕКОМЕНДАЦИИ ═══")
+            parts.append(advice)
+        
+        return "\n".join(filter(None, parts))
 
     def _copy(self):
         if not self._selected:

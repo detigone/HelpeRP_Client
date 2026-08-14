@@ -37,7 +37,9 @@ class HelpeRPMainWindow:
         self.root = ctk.CTk()
         self.root.title("HelpeRP — База знаний RP")
         self.root.configure(fg_color=T.BG_ROOT)
-        self.root.attributes("-topmost", True)
+        self.root.attributes("-topmost", False)
+        self.root.bind("<FocusIn>", lambda _e: self._set_topmost(True))
+        self.root.bind("<FocusOut>", lambda _e: self._set_topmost(False))
         self._set_window_icon()
 
         self.is_expanded = True
@@ -57,6 +59,7 @@ class HelpeRPMainWindow:
         self._pending_update = None
         self._detail_loader = None
         self._badge_pulse = None
+        self.favorites_overlay = None
         self.current_page = "database"
         self.nav_buttons = {}
         self.faction_buttons = {}
@@ -76,13 +79,24 @@ class HelpeRPMainWindow:
         self._bind_resize()
         self._update_categories()
         self._refresh_list()
-        self.root.after(200, self._adaptive.refresh)
-        self.root.after(2500, lambda: self._run_update_check(force=False))
+        self.root.after(60, self._adaptive.refresh)
+        self.root.after(2000, lambda: self._run_update_check(force=False))
         self._schedule_update_checks()
         if animations_enabled():
             try:
-                self.root.attributes("-alpha", 0.0)
-                self.root.after(80, lambda: Animator.fade_window(self.root, 0.0, 1.0, 320))
+                self.root.attributes("-alpha", 0.98)
+                self.root.after(40, lambda: self.root.attributes("-alpha", 1.0))
+            except Exception:
+                pass
+
+    def _set_topmost(self, active: bool):
+        try:
+            self.root.attributes("-topmost", bool(active))
+        except Exception:
+            pass
+        if hasattr(self, "favorites_overlay") and self.favorites_overlay is not None and self.favorites_overlay.winfo_exists():
+            try:
+                self.favorites_overlay.attributes("-topmost", bool(active))
             except Exception:
                 pass
 
@@ -381,30 +395,38 @@ class HelpeRPMainWindow:
         footer_inner.pack(fill="x", padx=T.PAD_SM, pady=(0, T.PAD_SM))
 
         settings_icon = self._keep_icon(ui_icon("settings", T.ICON_SM))
-        ctk.CTkButton(
+        settings_btn = ctk.CTkButton(
             footer_inner,
             text="  Настройки",
             image=settings_icon,
             compound="left",
-            height=32,
+            height=34,
             font=T.FONT_TINY,
             fg_color=T.BG_HOVER,
             hover_color=T.BORDER,
+            corner_radius=T.RADIUS_SM,
+            border_width=1,
+            border_color=T.BORDER,
             command=lambda: self._switch_page("settings"),
-        ).pack(fill="x", pady=(0, 4))
+        )
+        settings_btn.pack(fill="x", pady=(0, 4))
 
         docs_icon = self._keep_icon(ui_icon("info", T.ICON_SM))
-        ctk.CTkButton(
+        docs_btn = ctk.CTkButton(
             footer_inner,
             text="  Справка",
             image=docs_icon,
             compound="left",
-            height=32,
+            height=34,
             font=T.FONT_TINY,
             fg_color=T.BG_HOVER,
             hover_color=T.BORDER,
+            corner_radius=T.RADIUS_SM,
+            border_width=1,
+            border_color=T.BORDER,
             command=lambda: show_docs(self.root),
-        ).pack(fill="x")
+        )
+        docs_btn.pack(fill="x")
 
     def _refresh_recent_sidebar(self):
         for w in self.recent_frame.winfo_children():
@@ -486,12 +508,12 @@ class HelpeRPMainWindow:
             if animations_enabled():
                 Animator.flash_bar(self.accent_bar, self.root, self.accent)
 
-        if animations_enabled() and hasattr(self, "pages"):
+        if animations_enabled() and hasattr(self, "pages") and page != "database":
             def nudge(t, _):
                 pad = int(10 * (1 - abs(t * 2 - 1)))
                 self.pages.grid_configure(padx=pad)
 
-            Animator.tween(self.root, 170, nudge, on_done=apply)
+            Animator.tween(self.root, 120, nudge, on_done=apply)
         else:
             apply()
 
@@ -499,40 +521,42 @@ class HelpeRPMainWindow:
         page = self.current_page
         if page == "database":
             self._update_header_faction_icon()
-            self.header_faction_icon.grid()
             self.faction_title.configure(text=self.current_faction["name"])
             self.faction_sub.configure(text=self.current_faction.get("subtitle", ""))
             self.stats_label.configure(text=self._stats_text())
-            self.stats_label.grid()
+            if self.stats_label.winfo_ismapped():
+                pass
+            else:
+                self.stats_label.pack(side="right")
             self.faction_sub.grid()
         elif page == "measures":
             rules_icon = self._keep_icon(ui_icon("rules", T.ICON_LG))
             if rules_icon:
                 self.header_faction_icon.configure(image=rules_icon)
-            self.header_faction_icon.grid()
             self.faction_title.configure(text="Меры и наказания")
             self.faction_sub.configure(
                 text=f"Справочник из законодательства · {len(load_measures())} статей"
             )
-            self.stats_label.grid_remove()
+            if self.stats_label.winfo_ismapped():
+                self.stats_label.pack_forget()
             self.faction_sub.grid()
         elif page == "templates":
             tpl_icon = self._keep_icon(ui_icon("bolt", T.ICON_LG))
             if tpl_icon:
                 self.header_faction_icon.configure(image=tpl_icon)
-            self.header_faction_icon.grid()
             self.faction_title.configure(text="Шаблоны отыгровок")
             self.faction_sub.configure(text="Готовые /me и /do — без ИИ и API-ключа")
-            self.stats_label.grid_remove()
+            if self.stats_label.winfo_ismapped():
+                self.stats_label.pack_forget()
             self.faction_sub.grid()
         else:
             settings_icon = self._keep_icon(ui_icon("settings", T.ICON_LG))
             if settings_icon:
                 self.header_faction_icon.configure(image=settings_icon)
-            self.header_faction_icon.grid()
             self.faction_title.configure(text="Настройки HelpeRP")
             self.faction_sub.configure(text="ИИ, персонаж, хоткеи, интерфейс")
-            self.stats_label.grid_remove()
+            if self.stats_label.winfo_ismapped():
+                self.stats_label.pack_forget()
             self.faction_sub.grid()
 
     def _build_main(self):
@@ -630,7 +654,13 @@ class HelpeRPMainWindow:
         self.pages.grid_rowconfigure(0, weight=1)
 
         self._build_database_page()
-        self._switch_page("database")
+        self.current_page = "database"
+        self.page_database.grid()
+        self.page_measures.grid_remove()
+        self.page_templates.grid_remove()
+        self.page_settings.grid_remove()
+        self._update_page_header()
+        self.status_bar.grid()
 
     def _build_database_page(self):
         db = self.page_database
@@ -703,6 +733,18 @@ class HelpeRPMainWindow:
             command=self._on_filter,
         )
         self.frequent_only.pack(side="left")
+
+        self.btn_reset_filters = ctk.CTkButton(
+            freq_frame,
+            text="Снять фильтр",
+            width=120,
+            height=30,
+            font=T.FONT_TINY,
+            fg_color=T.BG_HOVER,
+            hover_color=T.BORDER,
+            command=self._reset_filters,
+        )
+        self.btn_reset_filters.pack(side="left", padx=(8, 0))
 
         self._db_list_panel = ctk.CTkFrame(
             db,
@@ -786,6 +828,20 @@ class HelpeRPMainWindow:
             hover_color=T.BORDER,
             command=self.copy_law_text,
         ).pack(side="left")
+
+        star_icon = self._keep_icon(ui_icon("frequent", T.ICON_MD))
+        ctk.CTkButton(
+            actions,
+            text="В избранное",
+            image=star_icon,
+            compound="left",
+            width=150,
+            height=36,
+            font=T.FONT_SMALL,
+            fg_color=T.BG_HOVER,
+            hover_color=T.BORDER,
+            command=self._add_current_to_favorites,
+        ).pack(side="left", padx=(8, 0))
 
         ai_icon = self._keep_icon(ui_icon("ai", T.ICON_MD))
         self.btn_ai = ctk.CTkButton(
@@ -936,7 +992,7 @@ class HelpeRPMainWindow:
         """Полное скрытие окна (не compact)."""
         if self.is_hidden:
             self.root.deiconify()
-            self.root.attributes("-topmost", True)
+            self._set_topmost(True)
             self.is_hidden = False
             show_toast(self.root, "HelpeRP снова на экране", accent=self.accent)
         else:
@@ -1024,10 +1080,18 @@ class HelpeRPMainWindow:
         self.apply_visual_theme()
         from core.ai_client import rp_ai
         rp_ai.update_client()
+        from core.discord_presence import refresh_discord_presence
+        refresh_discord_presence()
+
+    def _reset_filters(self):
+        self.search_entry.delete(0, "end")
+        self.category_box.set("Все категории")
+        if self.frequent_only.get():
+            self.frequent_only.deselect()
+        self._on_filter()
 
     def _clear_search(self):
-        self.search_entry.delete(0, "end")
-        self._on_filter()
+        self._reset_filters()
 
     def _set_mode(self, expanded: bool):
         if expanded == self.is_expanded:
@@ -1208,6 +1272,111 @@ class HelpeRPMainWindow:
         recent.insert(0, {"key": key, "title": title, "faction": self.current_faction["name"]})
         app_config.set("recent", recent[:12])
         self._refresh_recent_sidebar()
+
+    def _add_current_to_favorites(self):
+        if not self.current_item:
+            return
+        item = self.current_item
+        key = self._item_key(item)
+        title = item.get("title", "—")
+        config = app_config.get("favorites", {}) or {}
+        favorites = config.get("items", []) if isinstance(config.get("items", []), list) else []
+        favorites = [x for x in favorites if isinstance(x, dict) and x.get("key") != key]
+        favorites.insert(0, {
+            "key": key,
+            "title": title,
+            "faction": self.current_faction.get("name", "Все базы"),
+            "category": item.get("category", ""),
+        })
+        max_items = max(1, int(config.get("max_items", 8) or 8))
+        app_config.set("favorites", {
+            "items": favorites[:max_items],
+            "hotkey": config.get("hotkey") or "ctrl+alt+f",
+            "mode": config.get("mode") or "compact",
+            "max_items": max_items,
+        })
+        show_toast(self.root, "Добавлено в избранное", accent=self.accent)
+
+    def _favorites_for_overlay(self):
+        cfg = app_config.get("favorites", {}) or {}
+        items = cfg.get("items", []) if isinstance(cfg.get("items", []), list) else []
+        return [x for x in items if isinstance(x, dict)]
+
+    def toggle_favorites_overlay(self):
+        if self.favorites_overlay is None or not self.favorites_overlay.winfo_exists():
+            self.favorites_overlay = ctk.CTkToplevel(self.root)
+            self.favorites_overlay.withdraw()
+            self.favorites_overlay.attributes("-topmost", False)
+            self.favorites_overlay.overrideredirect(True)
+            self.favorites_overlay.configure(fg_color=T.BG_PANEL)
+            self.favorites_overlay.grid_columnconfigure(0, weight=1)
+            self.favorites_overlay.grid_rowconfigure(0, weight=1)
+
+            self._favorites_overlay_frame = ctk.CTkScrollableFrame(
+                self.favorites_overlay, fg_color=T.BG_PANEL, corner_radius=T.RADIUS,
+            )
+            self._favorites_overlay_frame.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+            self._favorites_overlay_frame.grid_columnconfigure(0, weight=1)
+        self._refresh_favorites_overlay()
+        if self.favorites_overlay.winfo_ismapped():
+            self.favorites_overlay.withdraw()
+        else:
+            self.favorites_overlay.deiconify()
+            self.favorites_overlay.focus_set()
+            self.favorites_overlay.geometry(self._favorites_overlay_geometry())
+
+    def _favorites_overlay_geometry(self):
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        w = min(420, sw - 60)
+        h = min(330, sh - 120)
+        x = max(20, sw - w - 30)
+        y = max(20, 40)
+        return f"{w}x{h}+{x}+{y}"
+
+    def _refresh_favorites_overlay(self):
+        frame = getattr(self, "_favorites_overlay_frame", None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+
+        items = self._favorites_for_overlay()
+        if not items:
+            ctk.CTkLabel(
+                frame, text="Избранное пусто\n\nДобавьте статьи в списке кнопкой 'В избранное'",
+                font=T.FONT_SMALL, text_color=T.TEXT_MUTED, justify="left", anchor="w",
+            ).pack(anchor="w", padx=12, pady=14)
+            return
+
+        mode = (app_config.get("favorites", {}) or {}).get("mode", "compact")
+        title = "Избранные статьи" if mode != "faction" else "Статьи подразделения"
+        ctk.CTkLabel(frame, text=title.upper(), font=T.FONT_TINY, text_color=self.accent, anchor="w").pack(anchor="w", padx=12, pady=(12, 8))
+        for item in items:
+            text = item.get("title", "—")
+            ctk.CTkButton(
+                frame,
+                text=text,
+                anchor="w",
+                height=34,
+                font=T.FONT_SMALL,
+                fg_color=T.BG_CARD,
+                hover_color=T.BG_HOVER,
+                text_color=T.TEXT_PRIMARY,
+                corner_radius=T.RADIUS_SM,
+                command=lambda i=item: self._open_favorite_from_overlay(i),
+            ).pack(fill="x", padx=12, pady=2)
+
+    def _open_favorite_from_overlay(self, item):
+        key = item.get("key")
+        if not key:
+            return
+        target_faction = get_faction(item.get("faction") or self.current_faction["name"])
+        self._select_faction(target_faction)
+        for entry in self.all_items:
+            if self._item_key(entry) == key:
+                self._show_item(entry, key)
+                return
 
     def _on_filter(self, event=None):
         query = self.search_entry.get().strip()

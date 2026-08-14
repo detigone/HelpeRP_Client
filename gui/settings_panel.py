@@ -69,7 +69,7 @@ class SettingsPanel(ctk.CTkFrame):
             "online_fallback", "rag_search", "auto_update", "auto_download",
         ):
             cb = getattr(self, name, None)
-            if cb is not None:
+            if isinstance(cb, ctk.CTkCheckBox):
                 yield cb
 
     def apply_theme(self, accent: str | None = None):
@@ -197,6 +197,21 @@ class SettingsPanel(ctk.CTkFrame):
         hot = self._section(scroll, "Горячие клавиши")
         self._field(hot, "Компакт ↔ развёрнутый", "hotkey_toggle", hk.get("toggle_overlay", "shift+\\"))
         self._field(hot, "Скрыть / показать окно", "hotkey_hide", hk.get("hide_window", "ctrl+shift+h"))
+        self._field(hot, "Показать избранное поверх окна", "favorites_hotkey", hk.get("favorites_overlay", app_config.get("favorites", {}).get("hotkey", "ctrl+alt+f")))
+
+        discord_cfg = app_config.get("discord", {})
+        disc = self._section(scroll, "Discord статус", "Показывает активность в Discord с кнопкой-ссылкой")
+        self.discord_enabled = ctk.BooleanVar(value=bool(discord_cfg.get("enabled", False)))
+        ctk.CTkCheckBox(
+            disc, text="Показывать статус в Discord",
+            variable=self.discord_enabled, font=T.FONT_SMALL, text_color=T.TEXT_SECONDARY,
+            fg_color=self.accent, hover_color=T.DEFAULT_ACCENT_HOVER,
+        ).pack(anchor="w", pady=(0, 8))
+        self._field(disc, "Client ID Discord", "discord_client_id", str(discord_cfg.get("client_id", "")))
+        self._field(disc, "Заголовок активности", "discord_details", str(discord_cfg.get("details", "HelpeRP — база знаний")))
+        self._field(disc, "Подзаголовок", "discord_state", str(discord_cfg.get("state", "Режим поиска и подготовки RP")))
+        self._field(disc, "Текст кнопки", "discord_button_label", str(discord_cfg.get("button_label", "Открыть HelpeRP")))
+        self._field(disc, "Ссылка на кнопку", "discord_button_url", str(discord_cfg.get("button_url", "https://yeolka-lm.github.io/HelpeRP_Client/")))
 
         ui = app_config.get("ui", {})
         uis = self._section(scroll, "Интерфейс")
@@ -212,7 +227,7 @@ class SettingsPanel(ctk.CTkFrame):
             variable=self.auto_ai, font=T.FONT_SMALL, text_color=T.TEXT_SECONDARY,
             fg_color=self.accent, hover_color=T.DEFAULT_ACCENT_HOVER,
         ).pack(anchor="w", pady=(T.PAD_SM, 0))
-        self.ui_animations = ctk.BooleanVar(value=ui.get("animations", True))
+        self.ui_animations = ctk.BooleanVar(value=bool(ui.get("animations", False)))
         ctk.CTkCheckBox(
             uis, text="Плавные анимации интерфейса",
             variable=self.ui_animations, font=T.FONT_SMALL, text_color=T.TEXT_SECONDARY,
@@ -407,12 +422,14 @@ class SettingsPanel(ctk.CTkFrame):
         self._hotkey_toggle.insert(0, hk.get("toggle_overlay", "shift+\\"))
         self._hotkey_hide.delete(0, "end")
         self._hotkey_hide.insert(0, hk.get("hide_window", "ctrl+shift+h"))
+        self._favorites_hotkey.delete(0, "end")
+        self._favorites_hotkey.insert(0, hk.get("favorites_overlay", app_config.get("favorites", {}).get("hotkey", "ctrl+alt+f")))
 
         ui = app_config.get("ui", {})
         self._list_limit.delete(0, "end")
         self._list_limit.insert(0, str(ui.get("list_limit", 120)))
         self.auto_ai.set(ui.get("auto_send_ai", False))
-        self.ui_animations.set(ui.get("animations", True))
+        self.ui_animations.set(bool(ui.get("animations", False)))
         if hasattr(self, "theme_picker"):
             self.theme_picker.reload()
 
@@ -497,9 +514,26 @@ class SettingsPanel(ctk.CTkFrame):
             "online_fallback": bool(self.online_fallback.get()),
             "rag": bool(self.rag_search.get()),
         })
+        discord_cfg = app_config.get("discord", {}) or {}
+        app_config.set("discord", {
+            "enabled": bool(self.discord_enabled.get()),
+            "client_id": self._discord_client_id.get().strip(),
+            "details": self._discord_details.get().strip() or "HelpeRP — база знаний",
+            "state": self._discord_state.get().strip() or "Режим поиска и подготовки RP",
+            "button_label": self._discord_button_label.get().strip() or "Открыть HelpeRP",
+            "button_url": self._discord_button_url.get().strip() or "https://yeolka-lm.github.io/HelpeRP_Client/",
+        })
+        favorites_cfg = app_config.get("favorites", {}) or {}
+        app_config.set("favorites", {
+            "items": favorites_cfg.get("items", []),
+            "hotkey": self._favorites_hotkey.get().strip() or "ctrl+alt+f",
+            "mode": favorites_cfg.get("mode", "compact"),
+            "max_items": max(1, int(favorites_cfg.get("max_items", 8) or 8)),
+        })
         app_config.set("hotkeys", {
             "toggle_overlay": self._hotkey_toggle.get().strip() or "shift+\\",
             "hide_window": self._hotkey_hide.get().strip() or "ctrl+shift+h",
+            "favorites_overlay": self._favorites_hotkey.get().strip() or "ctrl+alt+f",
             "submit_request": app_config.get("hotkeys", {}).get("submit_request", "enter"),
         })
         app_config.set("updates", {

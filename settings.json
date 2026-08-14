@@ -1,9 +1,9 @@
 {
     "api_key": "",
-    "base_url": "https://api.openai.com/v1",
-    "model": "gpt-4o-mini",
-    "ai_provider": "openai",
-    "current_faction": "Все базы",
+    "base_url": "http://localhost:1234/v1",
+    "model": "local-model",
+    "ai_provider": "lmstudio",
+    "current_faction": "МЧС",
     "character": {
         "name": "Иван Иванов",
         "rank": "Рядовой",
@@ -22,21 +22,97 @@
     ],
     "active_character_id": "char_d1bf77c4",
     "game": {
-        "chat_key": "t"
+        "chat_key": "/"
     },
     "ui": {
         "list_limit": 120,
         "auto_send_ai": false,
         "animations": true,
-        "theme": "helperp",
+        "theme": "default",
         "use_faction_accent": true,
         "custom_accent": ""
     },
-    "recent": [],
+    "recent": [
+        {
+            "key": "НПВ — Непригодная для дыхания среда — работа только в СИЗОД.",
+            "title": "НПВ — Непригодная для дыхания среда — работа только в СИЗОД.",
+            "faction": "МЧС"
+        },
+        {
+            "key": "mchs_rope_rescue",
+            "title": "Высотное спасение на тросах",
+            "faction": "МЧС"
+        },
+        {
+            "key": "АЦ — Автоцистерна пожарная — подвоз воды, пены и боевого рас…",
+            "title": "АЦ — Автоцистерна пожарная — подвоз воды, пены и боевого рас…",
+            "faction": "МЧС"
+        },
+        {
+            "key": "АКП — Автолестница / коленчатый подъёмник.",
+            "title": "АКП — Автолестница / коленчатый подъёмник.",
+            "faction": "МЧС"
+        },
+        {
+            "key": "ballistics",
+            "title": "Баллистическая экспертиза",
+            "faction": "Следственный комитет"
+        },
+        {
+            "key": "12.1",
+            "title": "[КоАП] Статья 12.1 КоАП РФ. Управление неисправным ТС",
+            "faction": "Законодательство РФ"
+        },
+        {
+            "key": "12.13",
+            "title": "[КоАП] Статья 12.13 КоАП РФ. Превышение скорости 60–80 км/ч",
+            "faction": "Законодательство РФ"
+        },
+        {
+            "key": "12.19",
+            "title": "[КоАП] Статья 12.19 КоАП РФ. Остановка в запрещённом месте",
+            "faction": "Законодательство РФ"
+        },
+        {
+            "key": "12.29",
+            "title": "[КоАП] Статья 12.29 КоАП РФ. Повторное управление в опьянении",
+            "faction": "Законодательство РФ"
+        },
+        {
+            "key": "12.16",
+            "title": "[КоАП] Статья 12.16 КоАП РФ. Управление в состоянии опьянения",
+            "faction": "Законодательство РФ"
+        },
+        {
+            "key": "12.30",
+            "title": "[КоАП] Статья 12.30 КоАП РФ. Телефон за рулём",
+            "faction": "Законодательство РФ"
+        },
+        {
+            "key": "turf",
+            "title": "Война за территорию",
+            "faction": "Крайм / ОПГ"
+        }
+    ],
+    "favorites": {
+        "items": [],
+        "hotkey": "ctrl+alt+f",
+        "mode": "compact",
+        "max_items": 8
+    },
+    "discord": {
+        "enabled": false,
+        "client_id": "",
+        "details": "HelpeRP — база знаний",
+        "state": "Режим поиска и подготовки RP",
+        "button_label": "Открыть HelpeRP",
+        "button_url": "https://yeolka-lm.github.io/HelpeRP_Client/"
+    },
     "hotkeys": {
         "toggle_overlay": "shift+\\",
         "hide_window": "ctrl+shift+h",
-        "submit_request": "enter"
+        "submit_request": "enter",
+        "favorites_overlay": "ctrl+alt+f"
     },
     "license": {
         "eula_accepted": false,
@@ -46,7 +122,7 @@
         "auto_check": true,
         "auto_download": true,
         "check_interval_hours": 24,
-        "last_check": null,
+        "last_check": "2026-08-14T06:09:24.882085+00:00",
         "dismissed_version": "",
         "manifest_url": ""
     },

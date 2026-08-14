@@ -33,6 +33,8 @@ def rebind_all_from_config(app_window):
     hk = app_config.get("hotkeys", {})
     toggle = hk.get("toggle_overlay", "shift+\\")
     hide = hk.get("hide_window", "ctrl+shift+h")
+    favorites = hk.get("favorites_overlay", app_config.get("favorites", {}).get("hotkey", "ctrl+alt+f"))
 
     bind("toggle_mode", toggle, app_window.toggle_visibility)
     bind("hide_window", hide, app_window.toggle_hidden)
+    bind("favorites_overlay", favorites, app_window.toggle_favorites_overlay)

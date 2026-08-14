@@ -2,6 +2,7 @@
 
 from core.config import app_config
 
+from core.discord_presence import start_discord_presence, stop_discord_presence
 from core.hotkey_manager import rebind_all_from_config
 
 from core.licensing import is_licensed, product_banner_line
@@ -35,6 +36,9 @@ def _launch_app():
         rebind_all_from_config(overlay)
 
         overlay._on_settings_saved()
+
+        from core.discord_presence import refresh_discord_presence
+        refresh_discord_presence()
 
 
 
@@ -94,21 +98,21 @@ def main():
 
     print("====================================================")
 
+    try:
+        if not is_licensed(app_config.get("license")):
 
+            print("[Лицензия] Требуется активация…")
 
-    if not is_licensed(app_config.get("license")):
+            if not _run_license_gate():
 
-        print("[Лицензия] Требуется активация…")
+                print("[Лицензия] Выход без активации.")
 
-        if not _run_license_gate():
+                return
 
-            print("[Лицензия] Выход без активации.")
-
-            return
-
-
-
-    _launch_app()
+        start_discord_presence()
+        _launch_app()
+    finally:
+        stop_discord_presence()
 
 
 

@@ -79,16 +79,31 @@ class Config:
             "ui": {
                 "list_limit": 120,
                 "auto_send_ai": False,
-                "animations": True,
+                "animations": False,
                 "theme": "helperp",
                 "use_faction_accent": True,
                 "custom_accent": "",
             },
             "recent": [],
+            "favorites": {
+                "items": [],
+                "hotkey": "ctrl+alt+f",
+                "mode": "compact",
+                "max_items": 8,
+            },
+            "discord": {
+                "enabled": False,
+                "client_id": "",
+                "details": "HelpeRP — база знаний",
+                "state": "Режим поиска и подготовки RP",
+                "button_label": "Открыть HelpeRP",
+                "button_url": "https://yeolka-lm.github.io/HelpeRP_Client/",
+            },
             "hotkeys": {
                 "toggle_overlay": "shift+\\",
                 "hide_window": "ctrl+shift+h",
                 "submit_request": "enter",
+                "favorites_overlay": "ctrl+alt+f",
             },
             "license": {"eula_accepted": False, "eula_version": "1.1"},
             "updates": {
@@ -142,6 +157,48 @@ class Config:
             migrated = migrate_license_cfg(lic)
             if migrated != lic:
                 self.settings["license"] = migrated
+
+        favorites = self.settings.get("favorites")
+        if not isinstance(favorites, dict):
+            favorites = {}
+        items = favorites.get("items")
+        if not isinstance(items, list):
+            items = []
+        try:
+            max_items = max(1, int(favorites.get("max_items", 8) or 8))
+        except (TypeError, ValueError):
+            max_items = 8
+        self.settings["favorites"] = {
+            "items": [
+                {
+                    "key": item.get("key") or item.get("id") or item.get("title"),
+                    "title": item.get("title") or "Избранная запись",
+                    "faction": item.get("faction") or self.settings.get("current_faction", "Все базы"),
+                }
+                for item in items
+                if isinstance(item, dict)
+            ][:max_items],
+            "hotkey": (favorites.get("hotkey") or "ctrl+alt+f").strip() or "ctrl+alt+f",
+            "mode": favorites.get("mode") or "compact",
+            "max_items": max_items,
+        }
+        hotkeys = self.settings.get("hotkeys", {})
+        if not isinstance(hotkeys, dict):
+            hotkeys = {}
+        hotkeys.setdefault("favorites_overlay", self.settings["favorites"]["hotkey"])
+        self.settings["hotkeys"] = hotkeys
+
+        discord_cfg = self.settings.get("discord")
+        if not isinstance(discord_cfg, dict):
+            discord_cfg = {}
+        self.settings["discord"] = {
+            "enabled": bool(discord_cfg.get("enabled", False)),
+            "client_id": str(discord_cfg.get("client_id", "")).strip(),
+            "details": (discord_cfg.get("details") or "HelpeRP — база знаний").strip() or "HelpeRP — база знаний",
+            "state": (discord_cfg.get("state") or "Режим поиска и подготовки RP").strip() or "Режим поиска и подготовки RP",
+            "button_label": (discord_cfg.get("button_label") or "Открыть HelpeRP").strip() or "Открыть HelpeRP",
+            "button_url": (discord_cfg.get("button_url") or "https://yeolka-lm.github.io/HelpeRP_Client/").strip() or "https://yeolka-lm.github.io/HelpeRP_Client/",
+        }
         from core.characters import migrate_characters_settings
         migrate_characters_settings(self.settings)
 

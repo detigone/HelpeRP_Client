@@ -6,7 +6,7 @@ GITHUB_PAGES_BASE = f"https://{GITHUB_USER}.github.io/{GITHUB_REPO}"
 
 PRODUCT_NAME = "HelpeRP"
 PRODUCT_EDITION = "Professional"
-VERSION = "2.2.0"
+VERSION = "3.0.0"
 EULA_VERSION = "1.1"
 COPYRIGHT = "© 2026 detigone. Все права защищены."
 VENDOR = "detigone"

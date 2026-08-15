@@ -1,4 +1,9 @@
-"""RAG-поиск (BM25) по базе HelpeRP — без тяжёлых ML-зависимостей."""
+"""RAG-поиск (BM25) по базе HelpeRP — без тяжёлых ML-зависимостей.
+
+Оптимизация: BM25-индекс строится один раз и переиспользуется между запросами.
+Также кэшируются токены и item_blob каждого документа, чтобы не пересчитывать
+их на каждый поисковый запрос (быстрый набор текста).
+"""
 
 from __future__ import annotations
 
@@ -23,6 +28,7 @@ class RagSearcher:
     def __init__(self):
         self._items: list[dict] = []
         self._doc_tokens: list[list[str]] = []
+        self._blobs: list[str] = []
         self._doc_len: list[int] = []
         self._avg_dl = 0.0
         self._df: Counter[str] = Counter()
@@ -31,11 +37,14 @@ class RagSearcher:
     def rebuild(self, items: list[dict]) -> None:
         self._items = list(items)
         self._doc_tokens = []
+        self._blobs = []
         self._doc_len = []
         self._df = Counter()
 
         for item in items:
-            tokens = tokenize(item_blob(item))
+            blob = item_blob(item)
+            self._blobs.append(blob)
+            tokens = tokenize(blob)
             self._doc_tokens.append(tokens)
             self._doc_len.append(len(tokens))
             for t in set(tokens):
@@ -86,6 +95,8 @@ def get_rag_searcher() -> RagSearcher:
 
 
 def ensure_rag_index(items: list[dict]) -> RagSearcher:
+    """Вернуть BM25-индекс для списка записей, перестраивая его только
+    когда набор записей действительно изменился (быстрый повторный поиск)."""
     global _items_ref
     if _items_ref is not items or len(_searcher._items) != len(items):
         _searcher.rebuild(items)

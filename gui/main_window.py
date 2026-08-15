@@ -10,7 +10,7 @@ from core.paths import icons_dir
 from core.search import filter_and_rank, item_blob
 from gui import theme as T
 from gui.ai_preview_dialog import AIPreviewDialog
-from gui.icons import faction_icon, ui_icon, preload
+from gui.icons import faction_icon, ui_icon, preload, nav_emoji, faction_emoji
 from gui.measures_panel import MeasuresPanel
 from gui.settings_panel import SettingsPanel
 from gui.templates_panel import TemplatesPanel
@@ -58,6 +58,10 @@ class HelpeRPMainWindow:
         self._settings_saved_callback = None
         self._pending_update = None
         self._detail_loader = None
+        self._filter_after = None  # debounce для быстрого набора
+        self._active_filters = {}  # тип фильтра -> значение
+        self._chip_buttons = {}  # ключ чипа -> кнопка
+        self._chips_container = None
         self._badge_pulse = None
         self.favorites_overlay = None
         self.current_page = "database"
@@ -293,13 +297,11 @@ class HelpeRPMainWindow:
             ("templates", "Шаблоны", "bolt"),
             ("settings", "Настройки", "settings"),
         ):
-            nav_icon = self._keep_icon(ui_icon(icon_key, T.ICON_SM))
+            emoji = nav_emoji(page_id)
             selected = page_id == self.current_page
             btn = ctk.CTkButton(
                 nav,
-                text=f"  {label}",
-                image=nav_icon,
-                compound="left",
+                text=f"{emoji}  {label}",
                 anchor="w",
                 height=36,
                 font=T.FONT_SMALL,
@@ -331,13 +333,11 @@ class HelpeRPMainWindow:
 
         saved = app_config.get("current_faction", FACTIONS[0]["name"])
         for fac in FACTIONS:
-            fac_icon = self._keep_icon(faction_icon(fac["id"], T.ICON_MD))
+            emoji = faction_emoji(fac["id"])
             selected = fac["name"] == saved
             btn = ctk.CTkButton(
                 scroll,
-                text=fac["name"],
-                image=fac_icon,
-                compound="left",
+                text=f"{emoji}  {fac['name']}",
                 anchor="w",
                 height=38,
                 font=T.FONT_SMALL,
@@ -678,14 +678,14 @@ class HelpeRPMainWindow:
 
         self.search_entry = ctk.CTkEntry(
             search_wrap,
-            placeholder_text="Поиск по названию, тексту, ключевым словам…",
+            placeholder_text="Поиск: название, статья, ключевые слова…",
             height=40,
             font=T.FONT_BODY,
             fg_color=T.BG_INPUT,
             border_color=T.BORDER,
         )
         self.search_entry.grid(row=0, column=0, sticky="ew")
-        self.search_entry.bind("<KeyRelease>", self._on_filter)
+        self.search_entry.bind("<KeyRelease>", self._on_search_typed)
 
         self.btn_clear_search = ctk.CTkButton(
             search_wrap,
@@ -745,6 +745,12 @@ class HelpeRPMainWindow:
             command=self._reset_filters,
         )
         self.btn_reset_filters.pack(side="left", padx=(8, 0))
+
+        # Ряд чипов активных фильтров (снимаются по отдельности)
+        self._chips_container = ctk.CTkFrame(toolbar, fg_color="transparent")
+        self._chips_container.grid(row=2, column=0, columnspan=2, sticky="ew")
+        self._chips_container.grid_remove()  # скрыт, пока нет активных фильтров
+        self._update_filter_chips()
 
         self._db_list_panel = ctk.CTkFrame(
             db,
@@ -857,7 +863,7 @@ class HelpeRPMainWindow:
         self.btn_ai.pack(side="right")
 
         self.status_bar = ctk.CTkLabel(
-            db, text="Ctrl+F — поиск  ·  ↑↓ — навигация  ·  Esc — сброс",
+            db, text="Ctrl+F — поиск  ·  ↑↓ — навигация  ·  Esc — сброс  ·  фильтры — чипами ✕",
             font=T.FONT_TINY, text_color=T.TEXT_MUTED, anchor="w",
         )
         self.status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=T.PAD, pady=(0, 8))
@@ -1088,10 +1094,50 @@ class HelpeRPMainWindow:
         self.category_box.set("Все категории")
         if self.frequent_only.get():
             self.frequent_only.deselect()
+        self._active_filters.clear()
+        self._update_filter_chips()
         self._on_filter()
 
     def _clear_search(self):
         self._reset_filters()
+
+    def _update_filter_chips(self):
+        """Перерисовать чипы активных фильтров (каждый снимается отдельно)."""
+        container = getattr(self, "_chips_container", None)
+        if container is None:
+            return
+        for child in container.winfo_children():
+            child.destroy()
+        self._chip_buttons.clear()
+        if not self._active_filters:
+            container.grid_remove()
+            return
+        for key, label in self._active_filters.items():
+            btn = ctk.CTkButton(
+                container,
+                text=f"{label}  ✕",
+                height=26,
+                font=T.FONT_TINY,
+                fg_color=T.BG_CARD,
+                hover_color=T.BORDER,
+                text_color=self.accent,
+                corner_radius=13,
+                command=lambda k=key: self._remove_filter_chip(k),
+            )
+            btn.pack(side="left", padx=(0, 6), pady=(4, 0))
+            self._chip_buttons[key] = btn
+        container.grid()
+
+    def _remove_filter_chip(self, key: str):
+        """Снять один конкретный фильтр (чип) и перефильтровать."""
+        if key == "query":
+            self.search_entry.delete(0, "end")
+        elif key == "category":
+            self.category_box.set("Все категории")
+        elif key == "frequent":
+            self.frequent_only.deselect()
+        self._active_filters.pop(key, None)
+        self._on_filter()
 
     def _set_mode(self, expanded: bool):
         if expanded == self.is_expanded:
@@ -1378,11 +1424,35 @@ class HelpeRPMainWindow:
                 self._show_item(entry, key)
                 return
 
+    def _on_search_typed(self, event=None):
+        """Debounce: пересчёт поиска только после паузы в наборе."""
+        if self._filter_after:
+            self.root.after_cancel(self._filter_after)
+        self._filter_after = self.root.after(150, self._on_filter)
+
+    def _apply_filter_now(self):
+        """Синхронная фильтрация (для кнопок/чипов, без debounce)."""
+        self._on_filter()
+
     def _on_filter(self, event=None):
+        if self._filter_after:
+            self.root.after_cancel(self._filter_after)
+            self._filter_after = None
         query = self.search_entry.get().strip()
         cat = self.category_box.get()
         pool = self.all_items
         self.list_show_all = False
+
+        # Запомнить активные фильтры для чипов
+        active = {}
+        if query:
+            active["query"] = query
+        if cat and cat != "Все категории":
+            active["category"] = cat
+        if self.frequent_only.get():
+            active["frequent"] = "Частые"
+        self._active_filters = active
+        self._update_filter_chips()
 
         if self.frequent_only.get():
             pool = [x for x in pool if x.get("is_frequent")]
@@ -1427,6 +1497,17 @@ class HelpeRPMainWindow:
                 font=T.FONT_TINY,
                 text_color=T.TEXT_MUTED,
             ).pack(pady=(4, 0))
+            if self._active_filters:
+                ctk.CTkButton(
+                    empty,
+                    text="Сбросить фильтры",
+                    width=140,
+                    height=30,
+                    font=T.FONT_TINY,
+                    fg_color=T.BG_HOVER,
+                    hover_color=T.BORDER,
+                    command=self._reset_filters,
+                ).pack(pady=(12, 0))
             return
 
         verified = ui_icon("frequent", T.ICON_SM)

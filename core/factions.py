@@ -172,6 +172,14 @@ def get_faction(name):
     return FACTION_BY_NAME.get(name, FACTIONS[0])
 
 
+def get_faction_by_id(faction_id):
+    """Найти фракцию по id (для эмодзи-иконок в UI)."""
+    for fac in FACTIONS:
+        if fac.get("id") == faction_id:
+            return fac
+    return FACTIONS[0]
+
+
 def _code_prefix(code_name):
     if "Уголов" in code_name:
         return "УК"

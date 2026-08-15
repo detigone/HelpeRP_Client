@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from core.config import app_config
+
 
 def item_blob(item: dict) -> str:
     parts = [
@@ -64,6 +66,12 @@ def score_item(item: dict, query: str) -> float:
     return base
 
 
+def _sort_scored(scored: list[tuple[float, dict]]) -> list[dict]:
+    """Отсортировать (score, item) и вернуть список записей."""
+    scored.sort(key=lambda x: (-x[0], not x[1].get("is_frequent", False), x[1].get("title", "")))
+    return [item for _, item in scored]
+
+
 def filter_and_rank(items: list[dict], query: str) -> list[dict]:
     query = (query or "").strip()
     if not query:
@@ -71,7 +79,6 @@ def filter_and_rank(items: list[dict], query: str) -> list[dict]:
 
     use_rag = True
     try:
-        from core.config import app_config
         use_rag = bool(app_config.get("search", {}).get("rag", True))
     except Exception:
         pass
@@ -90,8 +97,7 @@ def _keyword_filter_and_rank(items: list[dict], query: str) -> list[dict]:
         if s > 0:
             scored.append((s, item))
 
-    scored.sort(key=lambda x: (-x[0], not x[1].get("is_frequent", False), x[1].get("title", "")))
-    return [item for _, item in scored]
+    return _sort_scored(scored)
 
 
 def hybrid_filter_and_rank(items: list[dict], query: str) -> list[dict]:
@@ -113,5 +119,4 @@ def hybrid_filter_and_rank(items: list[dict], query: str) -> list[dict]:
     if not scored:
         return [item for _, item in rag.search(q, top_k=80)]
 
-    scored.sort(key=lambda x: (-x[0], not x[1].get("is_frequent", False), x[1].get("title", "")))
-    return [item for _, item in scored]
+    return _sort_scored(scored)

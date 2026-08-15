@@ -36,6 +36,10 @@ def _connect_locked(cfg: dict) -> bool:
 
     client_id = str(cfg.get("client_id", "")).strip()
     if not client_id or pypresence is None:
+        if not client_id:
+            logger.warning("Discord RPC: client_id не установлен в конфиге")
+        if pypresence is None:
+            logger.warning("Discord RPC: модуль pypresence не установлен (pip install pypresence)")
         return False
 
     if _RPC is not None:
@@ -45,21 +49,39 @@ def _connect_locked(cfg: dict) -> bool:
             pass
         _RPC = None
 
-    try:
-        rpc = pypresence.Presence(client_id)
-        rpc.connect()
-        _RPC = rpc
-        _apply_activity_locked(cfg)
-        logger.info("Discord RPC подключен")
+    def _try_connect():
+        try:
+            rpc = pypresence.Presence(client_id)
+            rpc.connect()  # Без timeout параметра - используем threading для обработки зависания
+            _apply_activity_locked(cfg)
+            logger.info(f"Discord RPC подключен (Client ID: {client_id})")
+            return rpc
+        except Exception as exc:
+            logger.warning(f"Discord RPC: не удалось подключиться (Client ID: {client_id}): {exc}")
+            return None
+
+    # Подключение с таймаутом в отдельном потоке (максимум 6 секунд ожидания)
+    result = [None]
+    
+    def _thread_connect():
+        result[0] = _try_connect()
+    
+    conn_thread = threading.Thread(target=_thread_connect, daemon=True)
+    conn_thread.start()
+    conn_thread.join(timeout=6)  # Ждём максимум 6 секунд, потом продолжаем
+    
+    if result[0] is not None:
+        _RPC = result[0]
         return True
-    except Exception as exc:
-        logger.warning("Discord RPC: не удалось подключиться: %s", exc)
+    else:
         _RPC = None
+        if conn_thread.is_alive():
+            logger.warning("Discord RPC: подключение заняло слишком долго (timeout 6s), продолжаем работу")
         return False
 
 
 def _apply_activity_locked(cfg: dict, details: str | None = None, state: str | None = None):
-    """Вызывать только под _LOCK."""
+    """Вызывать только под _LOCK. Никогда не отключает соединение."""
     global _RPC
     if _RPC is None:
         return
@@ -78,12 +100,8 @@ def _apply_activity_locked(cfg: dict, details: str | None = None, state: str | N
         _LAST_ACTIVITY["details"] = details
         _LAST_ACTIVITY["state"] = state
     except Exception as exc:
-        logger.debug("Discord RPC: update не удался, сбрасываю соединение: %s", exc)
-        try:
-            _RPC.close()
-        except Exception:
-            pass
-        _RPC = None
+        logger.debug("Discord RPC: update не удался, но соединение остаётся активным: %s", exc)
+        # НЕ сбрасываем соединение - пусть попробует ещё раз
 
 
 def _watcher_loop():
@@ -94,6 +112,9 @@ def _watcher_loop():
             with _LOCK:
                 if _RPC is None:
                     _connect_locked(cfg)
+                else:
+                    # Периодически обновляем activity чтобы presence оставался видимым
+                    _apply_activity_locked(cfg)
         _STOP_EVENT.wait(_RECONNECT_INTERVAL)
 
 
@@ -102,15 +123,22 @@ def start_discord_presence():
 
     _STOP_EVENT.clear()
     cfg = _discord_cfg()
-    if cfg.get("enabled", False):
-        with _LOCK:
-            _connect_locked(cfg)
+    
+    if not cfg.get("enabled", False):
+        logger.info("Discord RPC: отключен в конфиге")
+        return
+    
+    logger.info("Discord RPC: запуск...")
+    
+    with _LOCK:
+        _connect_locked(cfg)
 
     if _WATCHER_THREAD is None or not _WATCHER_THREAD.is_alive():
         _WATCHER_THREAD = threading.Thread(
             target=_watcher_loop, name="discord-rpc-watcher", daemon=True
         )
         _WATCHER_THREAD.start()
+        logger.info("Discord RPC: фоновый поток запущен")
 
 
 def refresh_discord_presence():
@@ -145,7 +173,9 @@ def update_discord_presence_from_state(details: str | None = None, state: str | 
         return
 
     with _LOCK:
+        # Если RPC мёртв, пытаемся переподключиться (не возвращаем, если не удалось)
         if _RPC is None:
-            if not _connect_locked(cfg):
-                return
+            _connect_locked(cfg)
+        
+        # Обновляем присутствие независимо от результата подключения
         _apply_activity_locked(cfg, details=details, state=state)

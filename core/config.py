@@ -1,4 +1,5 @@
 # HelpeRP_Client/core/config.py
+"""Конфигурация приложения: настройки, нормализация base_url, API-ключ."""
 import copy
 import json
 import os
@@ -123,7 +124,7 @@ class Config:
         self.settings = {}
         self.load_config()
 
-    def load_config(self):
+    def load_config(self) -> None:
         if os.path.exists(self.config_filename):
             try:
                 with open(self.config_filename, "r", encoding="utf-8") as f:
@@ -139,7 +140,7 @@ class Config:
             self.settings = copy.deepcopy(self.default_settings)
             self.save_config()
 
-    def _sanitize(self):
+    def _sanitize(self) -> None:
         from core.secrets import protect_secret, unprotect_secret
 
         self.settings["base_url"] = normalize_base_url(self.settings.get("base_url", ""))
@@ -202,7 +203,7 @@ class Config:
         from core.characters import migrate_characters_settings
         migrate_characters_settings(self.settings)
 
-    def save_config(self):
+    def save_config(self) -> None:
         try:
             from core.secrets import protect_secret
 
@@ -218,10 +219,10 @@ class Config:
         except Exception as e:
             print(f"[Config] Не удалось сохранить: {e}")
 
-    def get(self, key, default=None):
+    def get(self, key: str, default=None):
         return self.settings.get(key, default)
 
-    def set(self, key, value):
+    def set(self, key: str, value) -> None:
         if key == "base_url":
             value = normalize_base_url(str(value))
         self.settings[key] = value

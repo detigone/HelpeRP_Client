@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import os
 import re
 
-from core.search import filter_and_rank
-
+from core.json_loader import clear_cache, load_json
 from core.paths import data_dir
-
-DATA_DIR = data_dir()
+from core.search import filter_and_rank
 
 # Справочник уровней розыска для RP-серверов
 RP_LEVELS = [
@@ -46,15 +42,12 @@ def load_measures() -> list[dict]:
     if _cache is not None:
         return _cache
 
-    path = os.path.join(DATA_DIR, "legislation_rf.json")
-    if not os.path.isfile(path):
+    data = load_json(f"{data_dir()}/legislation_rf.json")
+    if not isinstance(data, dict):
         _cache = []
         return _cache
 
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-
-    items = []
+    items: list[dict] = []
     for code_name, articles in data.get("codes", {}).items():
         if "Уголов" in code_name:
             kind = "uk"
@@ -113,3 +106,9 @@ def filter_measures(
     if query:
         pool = filter_and_rank(pool, query)
     return pool
+
+
+def invalidate_cache():
+    global _cache
+    _cache = None
+    clear_cache()

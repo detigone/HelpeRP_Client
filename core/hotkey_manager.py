@@ -1,32 +1,40 @@
-"""Глобальные хоткеи с перепривязкой."""
+"""Глобальные хоткеи с перепривязкой.
+
+Внимание: keyboard.remove_hotkey() принимает ХЭНДЛ (число), возвращаемый
+keyboard.add_hotkey(), а не строку горячей клавиши. Прошлая версия хранила
+строку и вызывала remove_hotkey(строка) — биндинги не снимались и накапливались
+(утечка) при каждой перепривязке из настроек.
+"""
+
+from __future__ import annotations
 
 import keyboard
 
-_bindings: dict[str, tuple[str, callable]] = {}
+# name -> (hotkey_строка, callback, handle)
+_bindings: dict[str, dict] = {}
 
 
-def bind(name: str, hotkey: str, callback):
+def bind(name: str, hotkey: str, callback) -> None:
     """Зарегистрировать или обновить хоткей по имени."""
     unbind(name)
     try:
-        keyboard.add_hotkey(hotkey, callback, suppress=False)
-        _bindings[name] = (hotkey, callback)
+        handle = keyboard.add_hotkey(hotkey, callback, suppress=False)
+        _bindings[name] = {"hotkey": hotkey, "callback": callback, "handle": handle}
     except Exception as e:
         print(f"[Hotkeys] Не удалось привязать {hotkey} ({name}): {e}")
 
 
-def unbind(name: str):
+def unbind(name: str) -> None:
     entry = _bindings.pop(name, None)
     if not entry:
         return
-    hotkey, _ = entry
     try:
-        keyboard.remove_hotkey(hotkey)
+        keyboard.remove_hotkey(entry["handle"])
     except Exception:
         pass
 
 
-def rebind_all_from_config(app_window):
+def rebind_all_from_config(app_window) -> None:
     """Перечитать хоткеи из settings.json и привязать к окну."""
     from core.config import app_config
 

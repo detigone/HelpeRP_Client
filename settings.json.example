@@ -23,6 +23,16 @@
         "use_faction_accent": true,
         "custom_accent": ""
     },
+    "discord": {
+        "enabled": true,
+        "client_id": "1537723585798475826",
+        "details": "HelpeRP — база знаний",
+        "state": "Режим поиска и подготовки RP",
+        "button_label": "Открыть HelpeRP",
+        "button_url": "https://yeolka-lm.github.io/HelpeRP_Client/",
+        "large_image": "logo",
+        "large_text": "HelpeRP — интеллектуальный ассистент RolePlay"
+    },
     "hotkeys": {
         "toggle_overlay": "shift+\\",
         "hide_window": "ctrl+shift+h",

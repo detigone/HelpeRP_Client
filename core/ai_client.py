@@ -15,12 +15,16 @@ class AIClient:
         self.client = None
         self.update_client()
 
-    def update_client(self):
-        api_key = effective_api_key(
+    def _resolve_api_key(self) -> str:
+        """Единая точка получения эффективного API-ключа из конфига."""
+        return effective_api_key(
             app_config.get("api_key", ""),
             app_config.get("base_url", ""),
             app_config.get("ai_provider", ""),
         )
+
+    def update_client(self):
+        api_key = self._resolve_api_key()
         base_url = normalize_base_url(app_config.get("base_url", ""))
         if not api_key:
             self.client = None
@@ -35,12 +39,7 @@ class AIClient:
 
     def test_connection(self) -> tuple[bool, str]:
         """Проверка API. Возвращает (ok, message)."""
-        api_key = effective_api_key(
-            app_config.get("api_key", ""),
-            app_config.get("base_url", ""),
-            app_config.get("ai_provider", ""),
-        )
-        if not api_key:
+        if not self._resolve_api_key():
             return False, "Укажите API-ключ в настройках"
         try:
             self.update_client()
@@ -55,11 +54,7 @@ class AIClient:
             return False, str(e)[:120]
 
     def generate_rp_commands(self, user_situation: str) -> list:
-        if not effective_api_key(
-            app_config.get("api_key", ""),
-            app_config.get("base_url", ""),
-            app_config.get("ai_provider", ""),
-        ):
+        if not self._resolve_api_key():
             raise AIClientError("API-ключ не настроен. Откройте Настройки → ИИ.")
 
         from core.characters import get_active_character

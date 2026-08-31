@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 from core.config import app_config
+from functools import lru_cache
+
+
+_BLOB_CACHE: dict[int, str] = {}
 
 
 def item_blob(item: dict) -> str:
+    item_id = id(item)
+    if item_id in _BLOB_CACHE:
+        return _BLOB_CACHE[item_id]
+    
     parts = [
         str(item.get("article", "")),
         item.get("title", ""),
@@ -19,7 +27,14 @@ def item_blob(item: dict) -> str:
         " ".join(item.get("keywords", [])),
         " ".join(item.get("usable_by", [])),
     ]
-    return " ".join(p for p in parts if p).lower()
+    blob = " ".join(p for p in parts if p).lower()
+    _BLOB_CACHE[item_id] = blob
+    return blob
+
+
+def clear_blob_cache():
+    """Очистить кэш blob (вызывать при смене фракции/данных)."""
+    _BLOB_CACHE.clear()
 
 
 def score_item(item: dict, query: str) -> float:

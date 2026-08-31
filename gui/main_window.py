@@ -25,14 +25,16 @@ from gui.animations import (
 
 class HelpeRPMainWindow:
     def __init__(self):
+        # Применить тему ДО создания виджетов
+        from gui.theme_engine import load_theme_from_config
+        load_theme_from_config()
+
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
 
         self._icon_refs: list = []
-        preload()
-
-        from gui.theme_engine import load_theme_from_config
-        load_theme_from_config()
+        # Не делаем полный preload здесь — загрузим иконки лениво
+        self._preload_basic_icons()
 
         self.root = ctk.CTk()
         self.root.title("HelpeRP — База знаний RP")
@@ -72,18 +74,27 @@ class HelpeRPMainWindow:
         ui_cfg = app_config.get("ui", {})
         self.list_limit = int(ui_cfg.get("list_limit", 120))
 
+        # Ленивые страницы (создаются при первом переключении)
+        self._page_measures = None
+        self._page_templates = None
+        self._page_settings = None
+
         self._center_geometry(*T.EXPANDED_SIZE)
         self.root.minsize(960, 600)
 
         self._adaptive = AdaptiveWrap(self.root)
-        self._load_data()
-        self._build_ui()
-        self._apply_accent()
+        
+        # Создаем минимальный UI сразу
+        self._build_ui_minimal()
+        
+        # Загружаем данные в фоне
+        self._load_data_async()
+        
         self._bind_keyboard_shortcuts()
         self._bind_resize()
-        self._update_categories()
-        self._refresh_list()
-        self.root.after(60, self._adaptive.refresh)
+        
+        # Отложенные инициализации
+        self.root.after(100, self._post_init)
         self.root.after(2000, lambda: self._run_update_check(force=False))
         self._schedule_update_checks()
         if animations_enabled():
@@ -135,16 +146,189 @@ class HelpeRPMainWindow:
             y = (sh - h) // 2
         self.root.geometry(f"{w}x{h}+{x}+{y}")
 
-    def _load_data(self):
-        self.all_items, self.current_faction = load_faction_items(
-            self.current_faction["name"]
+    def _preload_basic_icons(self):
+        """Предзагрузить только критичные иконки для старта."""
+        from gui.icons import get_icon
+        # Только лого и базовые UI иконки
+        for name in ("logo.png", "home.png", "settings.png", "rules.png", "bolt.png"):
+            get_icon(name, 22)
+            get_icon(name, 28)
+
+    def _build_ui_minimal(self):
+        """Создать минимальный каркас UI без тяжелых страниц."""
+        self.compact_frame = ctk.CTkFrame(
+            self.root,
+            fg_color=T.BG_SIDEBAR,
+            corner_radius=T.RADIUS,
+            border_width=1,
+            border_color=T.BORDER,
         )
+        self._build_compact()
+
+        self.expanded_frame = ctk.CTkFrame(self.root, fg_color=T.BG_ROOT, corner_radius=0)
+        self.expanded_frame.pack(fill="both", expand=True)
+        self.expanded_frame.grid_columnconfigure(1, weight=1)
+        self.expanded_frame.grid_rowconfigure(0, weight=1)
+        self._build_sidebar()
+        self._build_main_minimal()
+
+    def _build_main_minimal(self):
+        """Создать только базовый main фрейм и database страницу."""
+        self.main = ctk.CTkFrame(self.expanded_frame, fg_color=T.BG_ROOT, corner_radius=0)
+        self.main.grid(row=0, column=1, sticky="nsew")
+        self.main.grid_columnconfigure(0, weight=1)
+        self.main.grid_columnconfigure(1, weight=2)
+        self.main.grid_rowconfigure(2, weight=1)
+
+        top = ctk.CTkFrame(self.main, fg_color="transparent")
+        top.grid(row=0, column=0, columnspan=2, sticky="ew", padx=T.PAD, pady=(T.PAD, 4))
+
+        header_left = ctk.CTkFrame(top, fg_color="transparent")
+        header_left.pack(side="left", fill="x", expand=True)
+
+        title_row = ctk.CTkFrame(header_left, fg_color="transparent")
+        title_row.pack(anchor="w")
+
+        self.header_faction_icon = ctk.CTkLabel(title_row, text="", width=T.ICON_LG)
+        self.header_faction_icon.pack(side="left", padx=(0, 8))
+
+        self.faction_title = ctk.CTkLabel(
+            title_row,
+            text=self.current_faction["name"],
+            font=T.FONT_HEADING,
+            text_color=T.TEXT_PRIMARY,
+            anchor="w",
+        )
+        self.faction_title.pack(side="left")
+        self._header_left = header_left
+        self._update_header_faction_icon()
+        self._adaptive.track(self.faction_title, header_left, padding=48)
+
+        collapse_icon = self._keep_icon(ui_icon("collapse", T.ICON_SM))
+        self.btn_collapse = ctk.CTkButton(
+            top,
+            text="Свернуть",
+            image=collapse_icon,
+            compound="left",
+            width=110,
+            height=28,
+            font=T.FONT_TINY,
+            fg_color=T.BG_HOVER,
+            hover_color=T.BORDER,
+            command=lambda: self._set_mode(False),
+        )
+        self.btn_collapse.pack(side="right", padx=(8, 0))
+
+        self.stats_label = ctk.CTkLabel(
+            top, text="Загрузка…", font=T.FONT_SMALL, text_color=T.TEXT_SECONDARY
+        )
+        self.stats_label.pack(side="right")
+
+        self.faction_sub = ctk.CTkLabel(
+            self.main,
+            text=self.current_faction.get("subtitle", ""),
+            font=T.FONT_TINY,
+            text_color=T.TEXT_MUTED,
+            anchor="w",
+            justify="left",
+        )
+        self.faction_sub.grid(
+            row=1, column=0, columnspan=2, sticky="ew", padx=T.PAD, pady=(0, T.PAD_SM)
+        )
+        self._adaptive.track(self.faction_sub, self.main, padding=T.PAD * 2)
+
+        # Контейнер страниц
+        self.pages = ctk.CTkFrame(self.main, fg_color="transparent")
+        self.pages.grid(row=2, column=0, columnspan=2, sticky="nsew")
+        self.pages.grid_columnconfigure(0, weight=1)
+        self.pages.grid_rowconfigure(0, weight=1)
+
+        # Создаем только database страницу сразу
+        self.page_database = ctk.CTkFrame(self.pages, fg_color="transparent")
+        self.page_database.grid(row=0, column=0, sticky="nsew")
+        self.page_database.grid_columnconfigure(0, weight=1, minsize=260)
+        self.page_database.grid_columnconfigure(1, weight=2, minsize=280)
+        self.page_database.grid_rowconfigure(1, weight=1)
+
+        self._build_database_page()
+        
+        # Страницы measures, templates, settings будут созданы лениво
+        self.current_page = "database"
+        self.page_database.grid()
+        self._update_page_header()
+        self.status_bar.grid()
+
+    def _load_data_async(self):
+        """Загрузить данные фракции и построить RAG индекс в фоне."""
+        def worker():
+            try:
+                items, faction = load_faction_items(self.current_faction["name"])
+                self.root.after(0, lambda: self._on_data_loaded(items, faction))
+            except Exception as e:
+                print(f"[Data] Ошибка загрузки: {e}")
+                self.root.after(0, lambda: self._on_data_loaded([], self.current_faction))
+
+        threading.Thread(target=worker, daemon=True, name="data-loader").start()
+
+    def _on_data_loaded(self, items, faction):
+        """Callback когда данные загружены."""
+        # Очистить кэш поиска при смене данных
+        from core.search import clear_blob_cache
+        clear_blob_cache()
+        
+        self.all_items = items
+        self.current_faction = faction
         self.filtered_items = list(self.all_items)
-        try:
-            from core.rag_search import ensure_rag_index
-            ensure_rag_index(self.all_items)
-        except Exception:
-            pass
+        
+        # Обновить UI
+        self._update_categories()
+        self._refresh_list()
+        self.stats_label.configure(text=self._stats_text())
+        self._update_compact_bar()
+        self._update_header_faction_icon()
+        self.faction_title.configure(text=faction["name"])
+        self.faction_sub.configure(text=faction.get("subtitle", ""))
+        
+        # Построить RAG индекс в фоне
+        self._build_rag_index_async()
+        
+        # Обновить кнопки фракций
+        for name, btn in self.faction_buttons.items():
+            fac = get_faction(name)
+            selected = name == faction["name"]
+            btn.configure(
+                fg_color=T.BG_SELECTED if selected else T.BG_CARD,
+                border_width=2 if selected else 0,
+                border_color=fac["accent"] if selected else T.BORDER,
+            )
+
+    def _build_rag_index_async(self):
+        """Построить BM25 индекс в фоне."""
+        def worker():
+            try:
+                from core.rag_search import ensure_rag_index
+                ensure_rag_index(self.all_items)
+            except Exception:
+                pass
+        
+        threading.Thread(target=worker, daemon=True, name="rag-index").start()
+
+    def _post_init(self):
+        """Отложенная инициализация после показа окна."""
+        self._adaptive.refresh()
+        # Подгрузить остальные иконки в фоне
+        self._preload_remaining_icons()
+
+    def _preload_remaining_icons(self):
+        """Подгрузить оставшиеся иконки в фоне."""
+        def worker():
+            from gui.icons import preload
+            preload()
+        threading.Thread(target=worker, daemon=True, name="icon-preload").start()
+
+    def _load_data(self):
+        """Deprecated: оставлен для совместимости."""
+        pass
 
     def _refresh_character_box(self):
         from core.characters import character_labels, get_active_character
@@ -468,6 +652,26 @@ class HelpeRPMainWindow:
 
         leaving_settings = self.current_page == "settings" and page != "settings"
 
+        # Ленивая инициализация страниц
+        if page == "measures" and self._page_measures is None:
+            self._page_measures = MeasuresPanel(self.pages, accent=self.accent, adaptive=self._adaptive)
+            self._page_measures.grid(row=0, column=0, sticky="nsew")
+            self._page_measures.grid_remove()
+        elif page == "templates" and self._page_templates is None:
+            self._page_templates = TemplatesPanel(self.pages, accent=self.accent)
+            self._page_templates.grid(row=0, column=0, sticky="nsew")
+            self._page_templates.grid_remove()
+        elif page == "settings" and self._page_settings is None:
+            self._page_settings = SettingsPanel(
+                self.pages,
+                on_saved=self._on_settings_saved,
+                on_check_updates=self._run_update_check,
+                on_theme_preview=self._preview_theme,
+                accent=self.accent,
+            )
+            self._page_settings.grid(row=0, column=0, sticky="nsew")
+            self._page_settings.grid_remove()
+
         def apply():
             if leaving_settings:
                 app_config.load_config()
@@ -478,11 +682,13 @@ class HelpeRPMainWindow:
             self.current_page = page
             pages = {
                 "database": self.page_database,
-                "measures": self.page_measures,
-                "templates": self.page_templates,
-                "settings": self.page_settings,
+                "measures": self._page_measures,
+                "templates": self._page_templates,
+                "settings": self._page_settings,
             }
             for name, frame in pages.items():
+                if frame is None:
+                    continue
                 if name == page:
                     frame.grid()
                 else:
@@ -499,7 +705,8 @@ class HelpeRPMainWindow:
             self._update_page_header()
 
             if page == "settings":
-                self.page_settings.reload_from_config()
+                if self._page_settings:
+                    self._page_settings.reload_from_config()
             elif page == "database":
                 self.status_bar.grid()
             else:
@@ -534,8 +741,19 @@ class HelpeRPMainWindow:
             if rules_icon:
                 self.header_faction_icon.configure(image=rules_icon)
             self.faction_title.configure(text="Меры и наказания")
+            # Ленивая загрузка количества мер
+            if not hasattr(self, "_measures_count"):
+                def load_count():
+                    try:
+                        from core.measures import load_measures
+                        count = len(load_measures())
+                        self.root.after(0, lambda: self._set_measures_count(count))
+                    except Exception:
+                        pass
+                threading.Thread(target=load_count, daemon=True).start()
+                self._measures_count = "…"
             self.faction_sub.configure(
-                text=f"Справочник из законодательства · {len(load_measures())} статей"
+                text=f"Справочник из законодательства · {self._measures_count} статей"
             )
             if self.stats_label.winfo_ismapped():
                 self.stats_label.pack_forget()
@@ -559,108 +777,14 @@ class HelpeRPMainWindow:
                 self.stats_label.pack_forget()
             self.faction_sub.grid()
 
-    def _build_main(self):
-        self.main = ctk.CTkFrame(self.expanded_frame, fg_color=T.BG_ROOT, corner_radius=0)
-        self.main.grid(row=0, column=1, sticky="nsew")
-        self.main.grid_columnconfigure(0, weight=1)
-        self.main.grid_columnconfigure(1, weight=2)
-        self.main.grid_rowconfigure(2, weight=1)
+    def _set_measures_count(self, count):
+        self._measures_count = count
+        if self.current_page == "measures":
+            self.faction_sub.configure(
+                text=f"Справочник из законодательства · {count} статей"
+            )
 
-        top = ctk.CTkFrame(self.main, fg_color="transparent")
-        top.grid(row=0, column=0, columnspan=2, sticky="ew", padx=T.PAD, pady=(T.PAD, 4))
-
-        header_left = ctk.CTkFrame(top, fg_color="transparent")
-        header_left.pack(side="left", fill="x", expand=True)
-
-        title_row = ctk.CTkFrame(header_left, fg_color="transparent")
-        title_row.pack(anchor="w")
-
-        self.header_faction_icon = ctk.CTkLabel(title_row, text="", width=T.ICON_LG)
-        self.header_faction_icon.pack(side="left", padx=(0, 8))
-
-        self.faction_title = ctk.CTkLabel(
-            title_row,
-            text=self.current_faction["name"],
-            font=T.FONT_HEADING,
-            text_color=T.TEXT_PRIMARY,
-            anchor="w",
-        )
-        self.faction_title.pack(side="left")
-        self._header_left = header_left
-        self._update_header_faction_icon()
-        self._adaptive.track(self.faction_title, header_left, padding=48)
-
-        collapse_icon = self._keep_icon(ui_icon("collapse", T.ICON_SM))
-        self.btn_collapse = ctk.CTkButton(
-            top,
-            text="Свернуть",
-            image=collapse_icon,
-            compound="left",
-            width=110,
-            height=28,
-            font=T.FONT_TINY,
-            fg_color=T.BG_HOVER,
-            hover_color=T.BORDER,
-            command=lambda: self._set_mode(False),
-        )
-        self.btn_collapse.pack(side="right", padx=(8, 0))
-
-        self.stats_label = ctk.CTkLabel(
-            top, text=self._stats_text(), font=T.FONT_SMALL, text_color=T.TEXT_SECONDARY
-        )
-        self.stats_label.pack(side="right")
-
-        self.faction_sub = ctk.CTkLabel(
-            self.main,
-            text=self.current_faction.get("subtitle", ""),
-            font=T.FONT_TINY,
-            text_color=T.TEXT_MUTED,
-            anchor="w",
-            justify="left",
-        )
-        self.faction_sub.grid(
-            row=1, column=0, columnspan=2, sticky="ew", padx=T.PAD, pady=(0, T.PAD_SM)
-        )
-        self._adaptive.track(self.faction_sub, self.main, padding=T.PAD * 2)
-
-        self.pages = ctk.CTkFrame(self.main, fg_color="transparent")
-        self.pages.grid(row=2, column=0, columnspan=2, sticky="nsew")
-        self.pages.grid_columnconfigure(0, weight=1)
-        self.pages.grid_rowconfigure(0, weight=1)
-
-        self.page_database = ctk.CTkFrame(self.pages, fg_color="transparent")
-        self.page_measures = MeasuresPanel(self.pages, accent=self.accent, adaptive=self._adaptive)
-        self.page_templates = TemplatesPanel(self.pages, accent=self.accent)
-        self.page_settings = SettingsPanel(
-            self.pages,
-            on_saved=self._on_settings_saved,
-            on_check_updates=self._run_update_check,
-            on_theme_preview=self._preview_theme,
-            accent=self.accent,
-        )
-
-        for frame in (self.page_database, self.page_measures, self.page_templates, self.page_settings):
-            frame.grid(row=0, column=0, sticky="nsew")
-
-        self.page_database.grid_columnconfigure(0, weight=1, minsize=260)
-        self.page_database.grid_columnconfigure(1, weight=2, minsize=280)
-        self.page_database.grid_rowconfigure(1, weight=1)
-        self.page_templates.grid_columnconfigure(0, weight=1)
-        self.page_templates.grid_rowconfigure(0, weight=1)
-
-        self.page_settings.grid_columnconfigure(0, weight=1)
-        self.page_settings.grid_rowconfigure(0, weight=1)
-
-        self.pages.grid_rowconfigure(0, weight=1)
-
-        self._build_database_page()
-        self.current_page = "database"
-        self.page_database.grid()
-        self.page_measures.grid_remove()
-        self.page_templates.grid_remove()
-        self.page_settings.grid_remove()
-        self._update_page_header()
-        self.status_bar.grid()
+    
 
     def _build_database_page(self):
         db = self.page_database
@@ -1064,9 +1188,13 @@ class HelpeRPMainWindow:
                 border_color=fac["accent"] if selected else T.BORDER,
             )
 
-        self.page_measures.apply_theme(self.accent)
-        self.page_templates.apply_theme(self.accent)
-        self.page_settings.apply_theme(self.accent)
+        # Применить тему только к уже созданным страницам
+        if self._page_measures is not None:
+            self._page_measures.apply_theme(self.accent)
+        if self._page_templates is not None:
+            self._page_templates.apply_theme(self.accent)
+        if self._page_settings is not None:
+            self._page_settings.apply_theme(self.accent)
         self._apply_accent()
         self._refresh_list()
         self._refresh_recent_sidebar()
@@ -1252,9 +1380,13 @@ class HelpeRPMainWindow:
         self.btn_ai.configure(fg_color=self.accent, hover_color=hover)
         self.btn_expand.configure(fg_color=self.accent, hover_color=hover)
         self.detail_title.configure(text_color=self.accent)
-        self.page_measures.set_accent(self.accent)
-        self.page_templates.set_accent(self.accent)
-        self.page_settings.set_accent(self.accent)
+        # Только для уже созданных страниц
+        if self._page_measures is not None:
+            self._page_measures.set_accent(self.accent)
+        if self._page_templates is not None:
+            self._page_templates.set_accent(self.accent)
+        if self._page_settings is not None:
+            self._page_settings.set_accent(self.accent)
         for name, btn in self.nav_buttons.items():
             if name == self.current_page:
                 btn.configure(border_color=self.accent)
@@ -1279,17 +1411,27 @@ class HelpeRPMainWindow:
                 border_color=fac["accent"] if selected else T.BORDER,
             )
 
-        self._load_data()
-        self._update_categories()
+        # Загрузить данные новой фракции асинхронно
+        self._load_faction_data_async(faction["name"])
         self._apply_accent()
         self._update_header_faction_icon()
         if animations_enabled():
             Animator.flash_bar(self.accent_bar, self.root, self.accent)
         self.faction_sub.configure(text=faction.get("subtitle", ""))
-        self.stats_label.configure(text=self._stats_text())
         self._clear_detail()
-        self._refresh_list()
         self._update_compact_bar()
+
+    def _load_faction_data_async(self, faction_name):
+        """Загрузить данные фракции в фоне."""
+        def worker():
+            try:
+                items, faction = load_faction_items(faction_name)
+                self.root.after(0, lambda: self._on_data_loaded(items, faction))
+            except Exception as e:
+                print(f"[Data] Ошибка загрузки фракции {faction_name}: {e}")
+                self.root.after(0, lambda: self._on_data_loaded([], get_faction(faction_name)))
+
+        threading.Thread(target=worker, daemon=True, name=f"faction-loader-{faction_name}").start()
 
     def _update_categories(self):
         cats = sorted({i.get("category") for i in self.all_items if i.get("category")})
@@ -1755,3 +1897,34 @@ class HelpeRPMainWindow:
 
     def start(self):
         self.root.mainloop()
+
+    # Properties для ленивого доступа к страницам
+    @property
+    def page_measures(self):
+        if self._page_measures is None:
+            self._page_measures = MeasuresPanel(self.pages, accent=self.accent, adaptive=self._adaptive)
+            self._page_measures.grid(row=0, column=0, sticky="nsew")
+            self._page_measures.grid_remove()
+        return self._page_measures
+
+    @property
+    def page_templates(self):
+        if self._page_templates is None:
+            self._page_templates = TemplatesPanel(self.pages, accent=self.accent)
+            self._page_templates.grid(row=0, column=0, sticky="nsew")
+            self._page_templates.grid_remove()
+        return self._page_templates
+
+    @property
+    def page_settings(self):
+        if self._page_settings is None:
+            self._page_settings = SettingsPanel(
+                self.pages,
+                on_saved=self._on_settings_saved,
+                on_check_updates=self._run_update_check,
+                on_theme_preview=self._preview_theme,
+                accent=self.accent,
+            )
+            self._page_settings.grid(row=0, column=0, sticky="nsew")
+            self._page_settings.grid_remove()
+        return self._page_settings

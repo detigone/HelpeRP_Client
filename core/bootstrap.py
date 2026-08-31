@@ -50,45 +50,64 @@ def _install_package(package: str) -> bool:
         return False
 
 
-def ensure_dependencies() -> bool:
+def ensure_dependencies(silent: bool = False) -> bool:
+    """Проверить и установить обязательные зависимости.
+    
+    Args:
+        silent: Если True, не печатает логи (для фонового запуска в exe)
+    """
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
         sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    """Проверить и установить обязательные зависимости."""
+    
+    # В режиме разработки пакеты уже установлены — пропускаем проверку
+    try:
+        from core.licensing import is_dev_mode
+        if is_dev_mode():
+            return True
+    except Exception:
+        pass
+    
     missing = [pkg for pkg in REQUIRED_PACKAGES if not _check_package(pkg)]
 
     if not missing:
         return True
 
-    print("\n[Bootstrap] Проверка зависимостей...")
-    print(f"[Bootstrap] Не найдено пакетов: {len(missing)}\n")
+    if not silent:
+        print("\n[Bootstrap] Проверка зависимостей...")
+        print(f"[Bootstrap] Не найдено пакетов: {len(missing)}\n")
 
     installed = 0
     for package in missing:
         if _install_package(package):
             installed += 1
 
-    print(f"\n[Bootstrap] Установлено: {installed}/{len(missing)}")
+    if not silent:
+        print(f"\n[Bootstrap] Установлено: {installed}/{len(missing)}")
 
     if installed < len(missing):
-        print("[Bootstrap] ⚠ Некоторые пакеты не установились.")
-        print(f"[Bootstrap] Попробуйте вручную: pip install -r requirements.txt")
+        if not silent:
+            print("[Bootstrap] ⚠ Некоторые пакеты не установились.")
+            print(f"[Bootstrap] Попробуйте вручную: pip install -r requirements.txt")
         return False
 
-    print("[Bootstrap] ✓ Все зависимости установлены\n")
+    if not silent:
+        print("[Bootstrap] ✓ Все зависимости установлены\n")
     return True
 
 
-def ensure_optional_dependencies() -> None:
+def ensure_optional_dependencies(silent: bool = True) -> None:
     """Тихо установить опциональные пакеты."""
     missing = [pkg for pkg in OPTIONAL_PACKAGES if not _check_package(pkg)]
     if not missing:
         return
 
-    print("[Bootstrap] Установка опциональных пакетов...", flush=True)
+    if not silent:
+        print("[Bootstrap] Установка опциональных пакетов...", flush=True)
     for package in missing:
         _install_package(package)
-    print("[Bootstrap] ✓ Опциональные пакеты обновлены\n")
+    if not silent:
+        print("[Bootstrap] ✓ Опциональные пакеты обновлены\n")
 
 
 def check_data_files() -> None:
@@ -106,23 +125,30 @@ def check_data_files() -> None:
         print(f"[Bootstrap] Переустановите приложение через exe")
 
 
-def run_bootstrap() -> bool:
-    """Запустить полную инициализацию."""
+def run_bootstrap(silent: bool = False) -> bool:
+    """Запустить полную инициализацию.
+    
+    Args:
+        silent: Если True, не печатает логи (используется в splash screen)
+    """
     try:
         # 1. Проверить обязательные зависимости
-        if not ensure_dependencies():
-            print("[Bootstrap] ⚠ Приложение может работать нестабильно\n")
+        if not ensure_dependencies(silent=silent):
+            if not silent:
+                print("[Bootstrap] ⚠ Приложение может работать нестабильно\n")
 
         # 2. Установить опциональные пакеты (фоном)
         try:
-            ensure_optional_dependencies()
+            ensure_optional_dependencies(silent=silent)
         except Exception as e:
-            print(f"[Bootstrap] Ошибка при установке опциональных: {e}")
+            if not silent:
+                print(f"[Bootstrap] Ошибка при установке опциональных: {e}")
 
         # 3. Проверить файлы данных
         check_data_files()
 
         return True
     except Exception as e:
-        print(f"[Bootstrap] Критическая ошибка: {e}")
+        if not silent:
+            print(f"[Bootstrap] Критическая ошибка: {e}")
         return False

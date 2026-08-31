@@ -1,26 +1,9 @@
-"""Пресеты оформления HelpeRP."""
+"""Пресеты оформления HelpeRP v2 — соответствуют новой теме."""
 
 from __future__ import annotations
 
 # id → palette (ключи совпадают с полями gui.theme)
 PRESETS: dict[str, dict] = {
-    "default": {
-        "label": "Стандартная (синяя)",
-        "accent": "#4a9eff",
-        "accent_hover": "#6bb3ff",
-        "bg_root": "#08090c",
-        "bg_sidebar": "#0e1014",
-        "bg_panel": "#13161c",
-        "bg_card": "#1a1e27",
-        "bg_input": "#1f2430",
-        "bg_hover": "#262c38",
-        "bg_selected": "#2a3140",
-        "border": "#2a3140",
-        "border_light": "#3a4354",
-        "text_primary": "#f3f4f6",
-        "text_secondary": "#a1a8b5",
-        "text_muted": "#6b7280",
-    },
     "helperp": {
         "label": "HelpeRP Purple",
         "accent": "#7c3aed",
@@ -122,6 +105,40 @@ PRESETS: dict[str, dict] = {
         "text_primary": "#fafafa",
         "text_secondary": "#a1a1aa",
         "text_muted": "#71717a",
+    },
+    "rose": {
+        "label": "Розовый кварц",
+        "accent": "#ec4899",
+        "accent_hover": "#f472b6",
+        "bg_root": "#10080e",
+        "bg_sidebar": "#180c16",
+        "bg_panel": "#20121c",
+        "bg_card": "#281824",
+        "bg_input": "#301c2c",
+        "bg_hover": "#3a2436",
+        "bg_selected": "#442c40",
+        "border": "#503648",
+        "border_light": "#684858",
+        "text_primary": "#fdf2f8",
+        "text_secondary": "#c8a8b8",
+        "text_muted": "#886878",
+    },
+    "amber": {
+        "label": "Янтарь",
+        "accent": "#f59e0b",
+        "accent_hover": "#fbbf24",
+        "bg_root": "#100c06",
+        "bg_sidebar": "#18120a",
+        "bg_panel": "#201a10",
+        "bg_card": "#282218",
+        "bg_input": "#302a1c",
+        "bg_hover": "#3a3422",
+        "bg_selected": "#443c28",
+        "border": "#504830",
+        "border_light": "#686040",
+        "text_primary": "#fffbeb",
+        "text_secondary": "#c8b898",
+        "text_muted": "#887858",
     },
 }
 

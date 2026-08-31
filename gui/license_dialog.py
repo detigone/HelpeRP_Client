@@ -128,8 +128,9 @@ class LicenseDialog(ctk.CTkToplevel):
         self.clipboard_append(text)
 
     def _on_close(self):
+        self.grab_release()
         self.destroy()
-        self.master.destroy()
+        self.master.quit()
 
     def _activate(self):
         if not self.accept_var.get():

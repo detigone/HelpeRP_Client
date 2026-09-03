@@ -5,8 +5,8 @@
 | | |
 |---|---|
 | **Версия** | 1.1.0 |
-| **Сайт и документация** | https://yeolka-lm.github.io/HelpeRP_Client/ |
-| **Обновления** | https://yeolka-lm.github.io/HelpeRP_Client/updates/manifest.json |
+| **Сайт и документация** | https://detigone.github.io/HelpeRP_Client/ |
+| **Обновления** | https://detigone.github.io/HelpeRP_Client/updates/manifest.json |
 | **Лицензия** | Коммерческая (см. [legal/EULA_RU.txt](legal/EULA_RU.txt)) |
 
 ---
